@@ -18,8 +18,14 @@ enum class ThemeMode {
     LIGHT,
 }
 
+enum class TransportMode {
+    BLUETOOTH,
+    WIFI,
+}
+
 data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val transportMode: TransportMode = TransportMode.BLUETOOTH,
     val pointerSensitivity: Float = 1.4f,
     val scrollSensitivity: Float = 1.2f,
     val pointerAcceleration: Boolean = true,
@@ -29,6 +35,8 @@ data class AppSettings(
     val autoConnect: Boolean = true,
     val lastConnectedAddress: String? = null,
     val lastConnectedName: String? = null,
+    val lastWifiHostIp: String? = null,
+    val lastWifiHostName: String? = null,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "bt_mouse_settings")
@@ -37,6 +45,7 @@ class SettingsRepository(private val context: Context) {
 
     private object Keys {
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val TRANSPORT_MODE = stringPreferencesKey("transport_mode")
         val POINTER_SENSITIVITY = floatPreferencesKey("pointer_sensitivity")
         val SCROLL_SENSITIVITY = floatPreferencesKey("scroll_sensitivity")
         val POINTER_ACCELERATION = booleanPreferencesKey("pointer_acceleration")
@@ -46,16 +55,21 @@ class SettingsRepository(private val context: Context) {
         val AUTO_CONNECT = booleanPreferencesKey("auto_connect")
         val LAST_ADDRESS = stringPreferencesKey("last_connected_address")
         val LAST_NAME = stringPreferencesKey("last_connected_name")
+        val LAST_WIFI_IP = stringPreferencesKey("last_wifi_host_ip")
+        val LAST_WIFI_NAME = stringPreferencesKey("last_wifi_host_name")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         val themeStr = prefs[Keys.THEME_MODE] ?: ThemeMode.SYSTEM.name
         val themeMode = runCatching { ThemeMode.valueOf(themeStr) }.getOrDefault(ThemeMode.SYSTEM)
+        val transportStr = prefs[Keys.TRANSPORT_MODE] ?: TransportMode.BLUETOOTH.name
+        val transportMode = runCatching { TransportMode.valueOf(transportStr) }.getOrDefault(TransportMode.BLUETOOTH)
         val polling = prefs[Keys.POLLING_RATE_HZ] ?: 125
         val validPolling = if (polling in listOf(60, 125, 250)) polling else 125
 
         AppSettings(
             themeMode = themeMode,
+            transportMode = transportMode,
             pointerSensitivity = (prefs[Keys.POINTER_SENSITIVITY] ?: 1.4f).coerceIn(0.4f, 3.5f),
             scrollSensitivity = (prefs[Keys.SCROLL_SENSITIVITY] ?: 1.2f).coerceIn(0.4f, 3.0f),
             pointerAcceleration = prefs[Keys.POINTER_ACCELERATION] ?: true,
@@ -65,11 +79,17 @@ class SettingsRepository(private val context: Context) {
             autoConnect = prefs[Keys.AUTO_CONNECT] ?: true,
             lastConnectedAddress = prefs[Keys.LAST_ADDRESS],
             lastConnectedName = prefs[Keys.LAST_NAME],
+            lastWifiHostIp = prefs[Keys.LAST_WIFI_IP],
+            lastWifiHostName = prefs[Keys.LAST_WIFI_NAME],
         )
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { it[Keys.THEME_MODE] = mode.name }
+    }
+
+    suspend fun setTransportMode(mode: TransportMode) {
+        context.dataStore.edit { it[Keys.TRANSPORT_MODE] = mode.name }
     }
 
     suspend fun setPointerSensitivity(value: Float) {
@@ -102,16 +122,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLastConnectedDevice(address: String?, name: String?) {
         context.dataStore.edit {
-            if (address != null) {
-                it[Keys.LAST_ADDRESS] = address
-            } else {
-                it.remove(Keys.LAST_ADDRESS)
-            }
-            if (name != null) {
-                it[Keys.LAST_NAME] = name
-            } else {
-                it.remove(Keys.LAST_NAME)
-            }
+            if (address != null) it[Keys.LAST_ADDRESS] = address else it.remove(Keys.LAST_ADDRESS)
+            if (name != null) it[Keys.LAST_NAME] = name else it.remove(Keys.LAST_NAME)
+        }
+    }
+
+    suspend fun setLastWifiHost(ip: String?, name: String?) {
+        context.dataStore.edit {
+            if (ip != null) it[Keys.LAST_WIFI_IP] = ip else it.remove(Keys.LAST_WIFI_IP)
+            if (name != null) it[Keys.LAST_WIFI_NAME] = name else it.remove(Keys.LAST_WIFI_NAME)
         }
     }
 }

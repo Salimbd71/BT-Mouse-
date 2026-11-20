@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>BTMouseReceiver</AssemblyName>
+    <RootNamespace>BTMouseReceiver</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>BT mouse Wi-Fi Receiver</Product>
+    <Company>BT mouse</Company>
+    <Description>Low-latency Wi-Fi Receiver for BT mouse Android Controller</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishReadyToRun>false</PublishReadyToRun>
+  </PropertyGroup>
+</Project>

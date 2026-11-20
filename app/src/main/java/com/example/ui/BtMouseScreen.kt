@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SettingsRemote
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -83,6 +84,7 @@ import com.example.bluetooth.BtConnectionState
 import com.example.bluetooth.HidKeyMap
 import com.example.bluetooth.HostDeviceType
 import com.example.data.ThemeMode
+import com.example.data.TransportMode
 import com.example.ui.components.DevicesBottomSheet
 import com.example.ui.components.KeyboardDeckSection
 import com.example.ui.components.PrecisionTouchpadSection
@@ -91,6 +93,7 @@ import com.example.ui.components.TvRemoteDeckSection
 import com.example.ui.theme.ConnectedEmerald
 import com.example.ui.theme.ErrorCoral
 import com.example.ui.theme.PairingAmber
+import com.example.wifi.WifiConnectionState
 
 @Composable
 fun BtMouseScreen(
@@ -172,29 +175,53 @@ fun BtMouseScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 // 1. Top Status & Control Header
+                val isTransmitting = if (uiState.settings.transportMode == TransportMode.WIFI) {
+                    uiState.wifiTransmitting
+                } else {
+                    uiState.telemetry.isTransmitting
+                }
                 TopControlHeader(
+                    transportMode = uiState.settings.transportMode,
                     connectionState = uiState.connectionState,
+                    wifiConnectionState = uiState.wifiConnectionState,
                     pollingRateHz = uiState.settings.pollingRateHz,
-                    isTransmitting = uiState.telemetry.isTransmitting,
+                    isTransmitting = isTransmitting,
                     themeMode = uiState.settings.themeMode,
                     onStatusClick = { viewModel.setDevicesSheetVisible(true) },
+                    onToggleTransport = {
+                        val next = if (uiState.settings.transportMode == TransportMode.BLUETOOTH) {
+                            TransportMode.WIFI
+                        } else {
+                            TransportMode.BLUETOOTH
+                        }
+                        viewModel.selectTransportMode(next)
+                    },
                     onThemeCycle = viewModel::cycleThemeMode,
                     onOpenSettings = { viewModel.setSettingsSheetVisible(true) },
                 )
 
                 // 2. Contextual One-Tap Pairing / Permission Banner (when not connected)
+                val isConnected = if (uiState.settings.transportMode == TransportMode.WIFI) {
+                    uiState.wifiConnectionState is WifiConnectionState.Connected
+                } else {
+                    uiState.connectionState is BtConnectionState.Connected
+                }
                 AnimatedVisibility(
-                    visible = uiState.connectionState !is BtConnectionState.Connected,
+                    visible = !isConnected,
                     enter = fadeIn() + expandVertically(),
                     exit = fadeOut() + shrinkVertically(),
                 ) {
                     QuickConnectionBanner(
+                        transportMode = uiState.settings.transportMode,
                         connectionState = uiState.connectionState,
+                        wifiConnectionState = uiState.wifiConnectionState,
                         pairedCount = uiState.pairedDevices.size,
+                        wifiHostCount = uiState.wifiHosts.size,
                         hasDiagnostic = uiState.diagnostic != null,
                         onGrantPermission = ::launchPermissions,
                         onEnableBluetooth = ::launchEnableBluetooth,
                         onAutoPair = ::launchDiscoverable,
+                        onScanWifi = viewModel::scanWifiHosts,
                         onOpenDevices = { viewModel.setDevicesSheetVisible(true) },
                     )
                 }
@@ -320,9 +347,7 @@ fun BtMouseScreen(
                                     onToggleModifier = viewModel::toggleModifier,
                                     onSendHidKey = { viewModel.sendHidKey(it) },
                                     onSendCombo = viewModel::sendCombo,
-                                    onSendCharacter = { ch ->
-                                        viewModel.hidController.sendTextString(ch.toString())
-                                    },
+                                    onSendCharacter = viewModel::sendCharacterKey,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -370,14 +395,7 @@ fun BtMouseScreen(
                                     onToggleModifier = viewModel::toggleModifier,
                                     onSendHidKey = { viewModel.sendHidKey(it) },
                                     onSendCombo = viewModel::sendCombo,
-                                    onSendCharacter = { ch ->
-                                        val shift = (uiState.latchedModifiers and HidKeyMap.MOD_LEFT_SHIFT) != 0
-                                        val actualChar = if (shift && ch.isLetter()) ch.uppercaseChar() else ch
-                                        val stroke = HidKeyMap.fromChar(actualChar)
-                                        if (stroke != null) {
-                                            viewModel.sendHidKey(stroke.keyCode, stroke.modifiers)
-                                        }
-                                    },
+                                    onSendCharacter = viewModel::sendCharacterKey,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -399,11 +417,16 @@ fun BtMouseScreen(
 
     if (uiState.showDevicesSheet) {
         DevicesBottomSheet(
+            transportMode = uiState.settings.transportMode,
             connectionState = uiState.connectionState,
             pairedDevices = uiState.pairedDevices,
             diagnostic = uiState.diagnostic,
             localBluetoothName = uiState.localBluetoothName,
+            wifiConnectionState = uiState.wifiConnectionState,
+            wifiHosts = uiState.wifiHosts,
+            lastWifiIp = uiState.settings.lastWifiHostIp,
             autoConnect = uiState.settings.autoConnect,
+            onSelectTransport = viewModel::selectTransportMode,
             onDismiss = { viewModel.setDevicesSheetVisible(false) },
             onDismissDiagnostic = viewModel::clearDiagnostic,
             onRequestPermissions = ::launchPermissions,
@@ -413,6 +436,9 @@ fun BtMouseScreen(
             onRefreshDevices = viewModel::refreshDevices,
             onConnectDevice = viewModel::connectToHost,
             onDisconnectDevice = viewModel::disconnectHost,
+            onScanWifi = viewModel::scanWifiHosts,
+            onConnectWifi = viewModel::connectWifiIp,
+            onDisconnectWifi = viewModel::disconnectWifi,
             onAutoConnectChanged = viewModel::setAutoConnect,
         )
     }
@@ -434,11 +460,14 @@ fun BtMouseScreen(
 
 @Composable
 private fun TopControlHeader(
+    transportMode: TransportMode,
     connectionState: BtConnectionState,
+    wifiConnectionState: WifiConnectionState,
     pollingRateHz: Int,
     isTransmitting: Boolean,
     themeMode: ThemeMode,
     onStatusClick: () -> Unit,
+    onToggleTransport: () -> Unit,
     onThemeCycle: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -447,51 +476,80 @@ private fun TopControlHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // Brand + Connection Status Pill
-        val (dotColor, statusText, hostIcon) = when (connectionState) {
-            is BtConnectionState.Connected -> {
-                val icon = when (connectionState.deviceType) {
-                    HostDeviceType.SMART_TV -> Icons.Rounded.Tv
-                    HostDeviceType.WINDOWS_PC -> Icons.Rounded.LaptopWindows
-                    HostDeviceType.OTHER -> Icons.Rounded.Bluetooth
-                }
-                Triple(ConnectedEmerald, connectionState.deviceName, icon)
+        val (dotColor, statusText, hostIcon) = if (transportMode == TransportMode.WIFI) {
+            when (wifiConnectionState) {
+                is WifiConnectionState.Connected -> Triple(
+                    ConnectedEmerald,
+                    "${wifiConnectionState.hostName} (${wifiConnectionState.latencyMs}ms)",
+                    Icons.Rounded.Wifi,
+                )
+                is WifiConnectionState.Connecting -> Triple(
+                    PairingAmber,
+                    "Connecting ${wifiConnectionState.hostName}…",
+                    Icons.Rounded.Wifi,
+                )
+                WifiConnectionState.Scanning -> Triple(
+                    PairingAmber,
+                    "Scanning Wi-Fi PCs…",
+                    Icons.Rounded.Wifi,
+                )
+                is WifiConnectionState.Error -> Triple(
+                    ErrorCoral,
+                    "Wi-Fi Tap to Connect",
+                    Icons.Rounded.Wifi,
+                )
+                WifiConnectionState.Idle -> Triple(
+                    MaterialTheme.colorScheme.primary,
+                    "Wi-Fi Ready • Tap to Connect",
+                    Icons.Rounded.Wifi,
+                )
             }
-            is BtConnectionState.Connecting -> Triple(
-                PairingAmber,
-                "Connecting ${connectionState.deviceName}…",
-                Icons.AutoMirrored.Rounded.BluetoothSearching,
-            )
-            is BtConnectionState.Discoverable -> Triple(
-                PairingAmber,
-                "Pairable (${connectionState.secondsRemaining}s)",
-                Icons.AutoMirrored.Rounded.BluetoothSearching,
-            )
-            BtConnectionState.Ready -> Triple(
-                MaterialTheme.colorScheme.primary,
-                stringResource(R.string.status_ready),
-                Icons.Rounded.Bluetooth,
-            )
-            BtConnectionState.PermissionRequired -> Triple(
-                ErrorCoral,
-                stringResource(R.string.status_permission_needed),
-                Icons.Rounded.Bluetooth,
-            )
-            BtConnectionState.BluetoothDisabled -> Triple(
-                ErrorCoral,
-                stringResource(R.string.status_bt_off),
-                Icons.Rounded.Bluetooth,
-            )
-            BtConnectionState.Unsupported -> Triple(
-                ErrorCoral,
-                stringResource(R.string.status_unsupported),
-                Icons.Rounded.Bluetooth,
-            )
-            BtConnectionState.Initializing -> Triple(
-                PairingAmber,
-                "Starting HID…",
-                Icons.Rounded.Bluetooth,
-            )
+        } else {
+            when (connectionState) {
+                is BtConnectionState.Connected -> {
+                    val icon = when (connectionState.deviceType) {
+                        HostDeviceType.SMART_TV -> Icons.Rounded.Tv
+                        HostDeviceType.WINDOWS_PC -> Icons.Rounded.LaptopWindows
+                        HostDeviceType.OTHER -> Icons.Rounded.Bluetooth
+                    }
+                    Triple(ConnectedEmerald, connectionState.deviceName, icon)
+                }
+                is BtConnectionState.Connecting -> Triple(
+                    PairingAmber,
+                    "Connecting ${connectionState.deviceName}…",
+                    Icons.AutoMirrored.Rounded.BluetoothSearching,
+                )
+                is BtConnectionState.Discoverable -> Triple(
+                    PairingAmber,
+                    "Pairable (${connectionState.secondsRemaining}s)",
+                    Icons.AutoMirrored.Rounded.BluetoothSearching,
+                )
+                BtConnectionState.Ready -> Triple(
+                    MaterialTheme.colorScheme.primary,
+                    stringResource(R.string.status_ready),
+                    Icons.Rounded.Bluetooth,
+                )
+                BtConnectionState.PermissionRequired -> Triple(
+                    ErrorCoral,
+                    stringResource(R.string.status_permission_needed),
+                    Icons.Rounded.Bluetooth,
+                )
+                BtConnectionState.BluetoothDisabled -> Triple(
+                    ErrorCoral,
+                    stringResource(R.string.status_bt_off),
+                    Icons.Rounded.Bluetooth,
+                )
+                BtConnectionState.Unsupported -> Triple(
+                    ErrorCoral,
+                    stringResource(R.string.status_unsupported),
+                    Icons.Rounded.Bluetooth,
+                )
+                BtConnectionState.Initializing -> Triple(
+                    PairingAmber,
+                    "Starting HID…",
+                    Icons.Rounded.Bluetooth,
+                )
+            }
         }
 
         Surface(
@@ -525,7 +583,7 @@ private fun TopControlHeader(
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = stringResource(R.string.app_name),
+                        text = if (transportMode == TransportMode.WIFI) "BT mouse • Wi-Fi" else "BT mouse • Bluetooth",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -536,7 +594,6 @@ private fun TopControlHeader(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                // Optimized Protocol Hz Telemetry Chip
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = if (isTransmitting) {
@@ -556,6 +613,50 @@ private fun TopControlHeader(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                     )
                 }
+            }
+        }
+
+        // 1-Tap BT / Wi-Fi Mode Switch
+        Surface(
+            onClick = onToggleTransport,
+            modifier = Modifier
+                .height(48.dp)
+                .testTag("transport_toggle_button"),
+            shape = RoundedCornerShape(14.dp),
+            color = if (transportMode == TransportMode.WIFI) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+            border = BorderStroke(
+                1.dp,
+                if (transportMode == TransportMode.WIFI) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+            ),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = if (transportMode == TransportMode.WIFI) Icons.Rounded.Wifi else Icons.Rounded.Bluetooth,
+                    contentDescription = "Switch BT or Wi-Fi mode",
+                    tint = if (transportMode == TransportMode.WIFI) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = if (transportMode == TransportMode.WIFI) "Wi-Fi" else "BT",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (transportMode == TransportMode.WIFI) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
             }
         }
 
@@ -606,24 +707,34 @@ private fun TopControlHeader(
 
 @Composable
 private fun QuickConnectionBanner(
+    transportMode: TransportMode,
     connectionState: BtConnectionState,
+    wifiConnectionState: WifiConnectionState,
     pairedCount: Int,
+    wifiHostCount: Int,
     hasDiagnostic: Boolean,
     onGrantPermission: () -> Unit,
     onEnableBluetooth: () -> Unit,
     onAutoPair: () -> Unit,
+    onScanWifi: () -> Unit,
     onOpenDevices: () -> Unit,
 ) {
+    val isError = if (transportMode == TransportMode.WIFI) {
+        wifiConnectionState is WifiConnectionState.Error
+    } else {
+        hasDiagnostic
+    }
+
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = if (hasDiagnostic) {
+        color = if (isError) {
             ErrorCoral.copy(alpha = 0.12f)
         } else {
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
         },
         border = BorderStroke(
             1.dp,
-            if (hasDiagnostic) ErrorCoral.copy(alpha = 0.55f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+            if (isError) ErrorCoral.copy(alpha = 0.55f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
         ),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -634,64 +745,99 @@ private fun QuickConnectionBanner(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                val (headline, sub) = when {
-                    connectionState == BtConnectionState.PermissionRequired ->
-                        "Bluetooth Permission" to "Tap Grant to connect TV & PC"
-                    connectionState == BtConnectionState.BluetoothDisabled ->
-                        "Bluetooth Disabled" to "Turn on Bluetooth to connect"
-                    connectionState is BtConnectionState.Discoverable ->
-                        "Discoverable Mode" to "Pair from your TV or Windows PC"
-                    connectionState == BtConnectionState.Unsupported ->
-                        "Android 9+ Required" to "HID profile requires Android 9 or newer"
-                    hasDiagnostic ->
-                        "Connection Declined" to "Tap Devices for re-pair steps"
-                    else ->
-                        "Quick Auto-Pair" to if (pairedCount > 0) "$pairedCount paired host(s) ready" else "Pair your Smart TV or Laptop"
+            if (transportMode == TransportMode.WIFI) {
+                Column(modifier = Modifier.weight(1f)) {
+                    val (headline, sub) = when (wifiConnectionState) {
+                        WifiConnectionState.Scanning ->
+                            "Scanning Wi-Fi…" to "Looking for BTMouseReceiver.exe on same Wi-Fi"
+                        is WifiConnectionState.Connecting ->
+                            "Connecting to ${wifiConnectionState.hostName}" to wifiConnectionState.ipAddress
+                        is WifiConnectionState.Error ->
+                            "PC Not Reached" to "Run BTMouseReceiver.exe & tap Connect"
+                        else ->
+                            "PC Wi-Fi Mode" to if (wifiHostCount > 0) "$wifiHostCount PC(s) found — tap Connect" else "Run BTMouseReceiver.exe on your laptop"
+                    }
+                    Text(headline, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = sub,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                Text(headline, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = sub,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+                FilledTonalButton(
+                    onClick = onScanWifi,
+                    modifier = Modifier.height(40.dp).testTag("banner_scan_wifi_btn"),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text("Scan") }
+                Button(
+                    onClick = onOpenDevices,
+                    modifier = Modifier.height(40.dp).testTag("banner_connect_wifi_btn"),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text("Connect") }
+            } else {
+                Column(modifier = Modifier.weight(1f)) {
+                    val (headline, sub) = when {
+                        connectionState == BtConnectionState.PermissionRequired ->
+                            "Bluetooth Permission" to "Tap Grant to connect TV & PC"
+                        connectionState == BtConnectionState.BluetoothDisabled ->
+                            "Bluetooth Disabled" to "Turn on Bluetooth to connect"
+                        connectionState is BtConnectionState.Discoverable ->
+                            "Discoverable Mode" to "Pair from your TV or Windows PC"
+                        connectionState == BtConnectionState.Unsupported ->
+                            "Android 9+ Required" to "HID profile requires Android 9 or newer"
+                        hasDiagnostic ->
+                            "Connection Declined" to "Tap Devices or switch to Wi-Fi"
+                        else ->
+                            "Quick Auto-Pair" to if (pairedCount > 0) "$pairedCount paired host(s) ready" else "Pair Smart TV or switch to Wi-Fi for PC"
+                    }
+                    Text(headline, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = sub,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
 
-            when (connectionState) {
-                BtConnectionState.PermissionRequired -> {
-                    Button(
-                        onClick = onGrantPermission,
-                        modifier = Modifier.height(40.dp).testTag("banner_grant_btn"),
-                        contentPadding = PaddingValues(horizontal = 14.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Grant") }
-                }
-                BtConnectionState.BluetoothDisabled -> {
-                    Button(
-                        onClick = onEnableBluetooth,
-                        modifier = Modifier.height(40.dp).testTag("banner_enable_bt_btn"),
-                        contentPadding = PaddingValues(horizontal = 14.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Turn On") }
-                }
-                BtConnectionState.Unsupported -> {}
-                else -> {
-                    if (pairedCount > 0) {
-                        FilledTonalButton(
-                            onClick = onOpenDevices,
-                            modifier = Modifier.height(40.dp).testTag("banner_devices_btn"),
+                when (connectionState) {
+                    BtConnectionState.PermissionRequired -> {
+                        Button(
+                            onClick = onGrantPermission,
+                            modifier = Modifier.height(40.dp).testTag("banner_grant_btn"),
+                            contentPadding = PaddingValues(horizontal = 14.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Grant") }
+                    }
+                    BtConnectionState.BluetoothDisabled -> {
+                        Button(
+                            onClick = onEnableBluetooth,
+                            modifier = Modifier.height(40.dp).testTag("banner_enable_bt_btn"),
+                            contentPadding = PaddingValues(horizontal = 14.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Turn On") }
+                    }
+                    BtConnectionState.Unsupported -> {}
+                    else -> {
+                        if (pairedCount > 0) {
+                            FilledTonalButton(
+                                onClick = onOpenDevices,
+                                modifier = Modifier.height(40.dp).testTag("banner_devices_btn"),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text("Devices") }
+                        }
+                        Button(
+                            onClick = onAutoPair,
+                            modifier = Modifier.height(40.dp).testTag("banner_auto_pair_btn"),
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             shape = RoundedCornerShape(12.dp),
-                        ) { Text("Devices") }
+                        ) { Text("Auto-Pair") }
                     }
-                    Button(
-                        onClick = onAutoPair,
-                        modifier = Modifier.height(40.dp).testTag("banner_auto_pair_btn"),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Auto-Pair") }
                 }
             }
         }

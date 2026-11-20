@@ -1,10 +1,15 @@
-name: Build & Release APK
+name: Build & Release APK & Windows EXE
 
 on:
   workflow_dispatch:
     inputs:
       run_unit_tests:
         description: "Run unit tests before building APKs"
+        required: false
+        type: boolean
+        default: true
+      build_windows_receiver:
+        description: "Build Windows Wi-Fi Receiver (.exe installer & portable)"
         required: false
         type: boolean
         default: true
@@ -137,4 +142,54 @@ jobs:
         with:
           name: bt-mouse-release-apk
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+  build-windows-exe:
+    name: Build Windows Receiver (.exe)
+    if: ${{ inputs.build_windows_receiver }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish self-contained BTMouseReceiver.exe
+        shell: pwsh
+        run: |
+          dotnet publish windows-receiver/BTMouseReceiver.csproj `
+            -c Release `
+            -r win-x64 `
+            -o windows-receiver/publish
+
+      - name: Build BTMouseReceiver-Setup.exe with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path $iscc)) {
+            $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $iscc = $cmd.Source }
+          }
+          & $iscc windows-receiver\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows Setup Installer (.exe)
+        uses: actions/upload-artifact@v6
+        with:
+          name: bt-mouse-windows-setup-exe
+          path: windows-receiver/installer-out/BTMouseReceiver-Setup.exe
+          if-no-files-found: error
+
+      - name: Upload Windows Portable Executable (.exe)
+        uses: actions/upload-artifact@v6
+        with:
+          name: bt-mouse-windows-portable-exe
+          path: windows-receiver/publish/BTMouseReceiver.exe
           if-no-files-found: error
