@@ -1,0 +1,814 @@
+package com.example.ui
+
+import android.bluetooth.BluetoothAdapter
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.BluetoothSearching
+import androidx.compose.material.icons.rounded.BrightnessAuto
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Keyboard
+import androidx.compose.material.icons.rounded.LaptopWindows
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Mouse
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.SettingsRemote
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.VolumeDown
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.R
+import com.example.bluetooth.BtConnectionState
+import com.example.bluetooth.HidKeyMap
+import com.example.bluetooth.HostDeviceType
+import com.example.data.ThemeMode
+import com.example.ui.components.DevicesBottomSheet
+import com.example.ui.components.KeyboardDeckSection
+import com.example.ui.components.PrecisionTouchpadSection
+import com.example.ui.components.SettingsBottomSheet
+import com.example.ui.components.TvRemoteDeckSection
+import com.example.ui.theme.ConnectedEmerald
+import com.example.ui.theme.ErrorCoral
+import com.example.ui.theme.PairingAmber
+
+@Composable
+fun BtMouseScreen(
+    viewModel: BtMouseViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        viewModel.onPermissionsUpdated()
+    }
+
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) {
+        viewModel.onPermissionsUpdated()
+    }
+
+    val discoverableLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode > 0) {
+            viewModel.onDiscoverableLaunched(result.resultCode)
+        } else {
+            viewModel.onDiscoverableLaunched(300)
+        }
+    }
+
+    fun launchPermissions() {
+        permissionLauncher.launch(viewModel.hidController.requiredPermissions())
+    }
+
+    fun launchEnableBluetooth() {
+        runCatching {
+            enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+        }
+    }
+
+    fun launchDiscoverable() {
+        if (!viewModel.hidController.hasRequiredPermissions()) {
+            launchPermissions()
+            return
+        }
+        val intent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+            putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+        }
+        runCatching {
+            discoverableLauncher.launch(intent)
+        }
+    }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets.safeDrawing,
+    ) { innerPadding ->
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            val isWideLayout = maxWidth >= 720.dp
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = if (isWideLayout) 1100.dp else 620.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // 1. Top Status & Control Header
+                TopControlHeader(
+                    connectionState = uiState.connectionState,
+                    pollingRateHz = uiState.settings.pollingRateHz,
+                    isTransmitting = uiState.telemetry.isTransmitting,
+                    themeMode = uiState.settings.themeMode,
+                    onStatusClick = { viewModel.setDevicesSheetVisible(true) },
+                    onThemeCycle = viewModel::cycleThemeMode,
+                    onOpenSettings = { viewModel.setSettingsSheetVisible(true) },
+                )
+
+                // 2. Contextual One-Tap Pairing / Permission Banner (when not connected)
+                AnimatedVisibility(
+                    visible = uiState.connectionState !is BtConnectionState.Connected,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    QuickConnectionBanner(
+                        connectionState = uiState.connectionState,
+                        pairedCount = uiState.pairedDevices.size,
+                        onGrantPermission = ::launchPermissions,
+                        onEnableBluetooth = ::launchEnableBluetooth,
+                        onAutoPair = ::launchDiscoverable,
+                        onOpenDevices = { viewModel.setDevicesSheetVisible(true) },
+                    )
+                }
+
+                // 3. Quick Shortcuts & Media Action Strip
+                QuickShortcutsStrip(
+                    showLiveTypeBar = uiState.showLiveTypeBar,
+                    onToggleTypeBar = viewModel::toggleLiveTypeBar,
+                    onHome = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_AC_HOME) },
+                    onBack = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_AC_BACK) },
+                    onPlayPause = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_PLAY_PAUSE) },
+                    onVolUp = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_VOLUME_UP) },
+                    onVolDown = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_VOLUME_DOWN) },
+                    onAltTab = { viewModel.sendCombo(HidKeyMap.MOD_LEFT_ALT, HidKeyMap.KEY_TAB) },
+                    onWinDesktop = { viewModel.sendCombo(HidKeyMap.MOD_LEFT_GUI, HidKeyMap.KEY_D) },
+                )
+
+                // 4. Inline Live Soft-Keyboard Input Bar (when toggled from Touchpad/TV)
+                AnimatedVisibility(
+                    visible = uiState.showLiveTypeBar && uiState.activeTab != ControllerTab.KEYBOARD,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    OutlinedTextField(
+                        value = uiState.liveTypeBuffer,
+                        onValueChange = viewModel::onLiveTypeBufferChanged,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("quick_live_type_field"),
+                        placeholder = { Text(stringResource(R.string.hint_type_to_host)) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                viewModel.sendHidKey(HidKeyMap.KEY_ENTER)
+                                viewModel.clearLiveTypeBuffer()
+                            },
+                        ),
+                        trailingIcon = {
+                            Row {
+                                if (uiState.liveTypeBuffer.isNotEmpty()) {
+                                    IconButton(onClick = viewModel::clearLiveTypeBuffer) {
+                                        Icon(Icons.Rounded.Clear, contentDescription = "Clear")
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        viewModel.sendHidKey(HidKeyMap.KEY_ENTER)
+                                        viewModel.clearLiveTypeBuffer()
+                                    },
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Rounded.KeyboardReturn,
+                                        contentDescription = "Send Enter",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        },
+                    )
+                }
+
+                // 5. Main Ergonomic Controller Area (Adaptive Split on Tablets, Tabs on Phones)
+                if (isWideLayout) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        PrecisionTouchpadSection(
+                            hapticEnabled = uiState.settings.hapticFeedback,
+                            isLeftPressed = uiState.isLeftPressed,
+                            isMiddlePressed = uiState.isMiddlePressed,
+                            isRightPressed = uiState.isRightPressed,
+                            onMove = viewModel::onTouchpadMove,
+                            onTwoFingerScroll = viewModel::onTouchpadScroll,
+                            onWheelStripScroll = viewModel::onWheelStripScroll,
+                            onPinchZoom = viewModel::onPinchZoom,
+                            onLeftClick = viewModel::onLeftClick,
+                            onRightClick = viewModel::onRightClick,
+                            onMiddleClick = viewModel::onMiddleClick,
+                            onLeftHoldChanged = viewModel::setLeftButtonHeld,
+                            onRightHoldChanged = viewModel::setRightButtonHeld,
+                            onMiddleHoldChanged = viewModel::setMiddleButtonHeld,
+                            modifier = Modifier
+                                .weight(1.1f)
+                                .fillMaxHeight(),
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .weight(0.9f)
+                                .fillMaxHeight(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            ControllerModeSwitcher(
+                                activeTab = if (uiState.activeTab == ControllerTab.TV_REMOTE) {
+                                    ControllerTab.TV_REMOTE
+                                } else {
+                                    ControllerTab.KEYBOARD
+                                },
+                                includeTouchpad = false,
+                                onSelectTab = viewModel::selectTab,
+                            )
+
+                            if (uiState.activeTab == ControllerTab.TV_REMOTE) {
+                                TvRemoteDeckSection(
+                                    hapticEnabled = uiState.settings.hapticFeedback,
+                                    onSendHidKey = { viewModel.sendHidKey(it) },
+                                    onSendConsumer = viewModel::sendConsumerKey,
+                                    onOpenKeyboard = { viewModel.selectTab(ControllerTab.KEYBOARD) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            } else {
+                                KeyboardDeckSection(
+                                    hapticEnabled = uiState.settings.hapticFeedback,
+                                    latchedModifiers = uiState.latchedModifiers,
+                                    liveTypeBuffer = uiState.liveTypeBuffer,
+                                    onLiveTypeChanged = viewModel::onLiveTypeBufferChanged,
+                                    onClearBuffer = viewModel::clearLiveTypeBuffer,
+                                    onToggleModifier = viewModel::toggleModifier,
+                                    onSendHidKey = { viewModel.sendHidKey(it) },
+                                    onSendCombo = viewModel::sendCombo,
+                                    onSendCharacter = { ch ->
+                                        viewModel.hidController.sendTextString(ch.toString())
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    ControllerModeSwitcher(
+                        activeTab = uiState.activeTab,
+                        includeTouchpad = true,
+                        onSelectTab = viewModel::selectTab,
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    ) {
+                        when (uiState.activeTab) {
+                            ControllerTab.TOUCHPAD -> {
+                                PrecisionTouchpadSection(
+                                    hapticEnabled = uiState.settings.hapticFeedback,
+                                    isLeftPressed = uiState.isLeftPressed,
+                                    isMiddlePressed = uiState.isMiddlePressed,
+                                    isRightPressed = uiState.isRightPressed,
+                                    onMove = viewModel::onTouchpadMove,
+                                    onTwoFingerScroll = viewModel::onTouchpadScroll,
+                                    onWheelStripScroll = viewModel::onWheelStripScroll,
+                                    onPinchZoom = viewModel::onPinchZoom,
+                                    onLeftClick = viewModel::onLeftClick,
+                                    onRightClick = viewModel::onRightClick,
+                                    onMiddleClick = viewModel::onMiddleClick,
+                                    onLeftHoldChanged = viewModel::setLeftButtonHeld,
+                                    onRightHoldChanged = viewModel::setRightButtonHeld,
+                                    onMiddleHoldChanged = viewModel::setMiddleButtonHeld,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            ControllerTab.KEYBOARD -> {
+                                KeyboardDeckSection(
+                                    hapticEnabled = uiState.settings.hapticFeedback,
+                                    latchedModifiers = uiState.latchedModifiers,
+                                    liveTypeBuffer = uiState.liveTypeBuffer,
+                                    onLiveTypeChanged = viewModel::onLiveTypeBufferChanged,
+                                    onClearBuffer = viewModel::clearLiveTypeBuffer,
+                                    onToggleModifier = viewModel::toggleModifier,
+                                    onSendHidKey = { viewModel.sendHidKey(it) },
+                                    onSendCombo = viewModel::sendCombo,
+                                    onSendCharacter = { ch ->
+                                        val shift = (uiState.latchedModifiers and HidKeyMap.MOD_LEFT_SHIFT) != 0
+                                        val actualChar = if (shift && ch.isLetter()) ch.uppercaseChar() else ch
+                                        val stroke = HidKeyMap.fromChar(actualChar)
+                                        if (stroke != null) {
+                                            viewModel.sendHidKey(stroke.keyCode, stroke.modifiers)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            ControllerTab.TV_REMOTE -> {
+                                TvRemoteDeckSection(
+                                    hapticEnabled = uiState.settings.hapticFeedback,
+                                    onSendHidKey = { viewModel.sendHidKey(it) },
+                                    onSendConsumer = viewModel::sendConsumerKey,
+                                    onOpenKeyboard = { viewModel.selectTab(ControllerTab.KEYBOARD) },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (uiState.showDevicesSheet) {
+        DevicesBottomSheet(
+            connectionState = uiState.connectionState,
+            pairedDevices = uiState.pairedDevices,
+            autoConnect = uiState.settings.autoConnect,
+            onDismiss = { viewModel.setDevicesSheetVisible(false) },
+            onRequestPermissions = ::launchPermissions,
+            onEnableBluetooth = ::launchEnableBluetooth,
+            onMakeDiscoverable = ::launchDiscoverable,
+            onRefreshDevices = viewModel::refreshDevices,
+            onConnectDevice = viewModel::connectToHost,
+            onDisconnectDevice = viewModel::disconnectHost,
+            onAutoConnectChanged = viewModel::setAutoConnect,
+        )
+    }
+
+    if (uiState.showSettingsSheet) {
+        SettingsBottomSheet(
+            settings = uiState.settings,
+            onDismiss = { viewModel.setSettingsSheetVisible(false) },
+            onThemeModeChanged = viewModel::setThemeMode,
+            onPointerSensitivityChanged = viewModel::setPointerSensitivity,
+            onScrollSensitivityChanged = viewModel::setScrollSensitivity,
+            onAccelerationChanged = viewModel::setPointerAcceleration,
+            onNaturalScrollChanged = viewModel::setNaturalScroll,
+            onPollingRateChanged = viewModel::setPollingRateHz,
+            onHapticChanged = viewModel::setHapticFeedback,
+        )
+    }
+}
+
+@Composable
+private fun TopControlHeader(
+    connectionState: BtConnectionState,
+    pollingRateHz: Int,
+    isTransmitting: Boolean,
+    themeMode: ThemeMode,
+    onStatusClick: () -> Unit,
+    onThemeCycle: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // Brand + Connection Status Pill
+        val (dotColor, statusText, hostIcon) = when (connectionState) {
+            is BtConnectionState.Connected -> {
+                val icon = when (connectionState.deviceType) {
+                    HostDeviceType.SMART_TV -> Icons.Rounded.Tv
+                    HostDeviceType.WINDOWS_PC -> Icons.Rounded.LaptopWindows
+                    HostDeviceType.OTHER -> Icons.Rounded.Bluetooth
+                }
+                Triple(ConnectedEmerald, connectionState.deviceName, icon)
+            }
+            is BtConnectionState.Connecting -> Triple(
+                PairingAmber,
+                "Connecting ${connectionState.deviceName}…",
+                Icons.Rounded.BluetoothSearching,
+            )
+            is BtConnectionState.Discoverable -> Triple(
+                PairingAmber,
+                "Pairable (${connectionState.secondsRemaining}s)",
+                Icons.Rounded.BluetoothSearching,
+            )
+            BtConnectionState.Ready -> Triple(
+                MaterialTheme.colorScheme.primary,
+                stringResource(R.string.status_ready),
+                Icons.Rounded.Bluetooth,
+            )
+            BtConnectionState.PermissionRequired -> Triple(
+                ErrorCoral,
+                stringResource(R.string.status_permission_needed),
+                Icons.Rounded.Bluetooth,
+            )
+            BtConnectionState.BluetoothDisabled -> Triple(
+                ErrorCoral,
+                stringResource(R.string.status_bt_off),
+                Icons.Rounded.Bluetooth,
+            )
+            BtConnectionState.Unsupported -> Triple(
+                ErrorCoral,
+                stringResource(R.string.status_unsupported),
+                Icons.Rounded.Bluetooth,
+            )
+            BtConnectionState.Initializing -> Triple(
+                PairingAmber,
+                "Starting HID…",
+                Icons.Rounded.Bluetooth,
+            )
+        }
+
+        Surface(
+            onClick = onStatusClick,
+            modifier = Modifier
+                .weight(1f)
+                .height(48.dp)
+                .testTag("connection_status_pill"),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(dotColor),
+                )
+                Icon(
+                    imageVector = hostIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.app_name),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Optimized Protocol Hz Telemetry Chip
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isTransmitting) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                ) {
+                    Text(
+                        text = "${pollingRateHz}Hz",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isTransmitting) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                    )
+                }
+            }
+        }
+
+        // Quick Dark Mode Toggle
+        val themeIcon = when (themeMode) {
+            ThemeMode.DARK -> Icons.Rounded.DarkMode
+            ThemeMode.LIGHT -> Icons.Rounded.LightMode
+            ThemeMode.SYSTEM -> Icons.Rounded.BrightnessAuto
+        }
+        Surface(
+            onClick = onThemeCycle,
+            modifier = Modifier
+                .size(48.dp)
+                .testTag("theme_toggle_button"),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = themeIcon,
+                    contentDescription = "Toggle Dark Mode",
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+
+        // Settings Sheet Trigger
+        Surface(
+            onClick = onOpenSettings,
+            modifier = Modifier
+                .size(48.dp)
+                .testTag("settings_button"),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Rounded.Tune,
+                    contentDescription = stringResource(R.string.action_settings),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickConnectionBanner(
+    connectionState: BtConnectionState,
+    pairedCount: Int,
+    onGrantPermission: () -> Unit,
+    onEnableBluetooth: () -> Unit,
+    onAutoPair: () -> Unit,
+    onOpenDevices: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                val (headline, sub) = when (connectionState) {
+                    BtConnectionState.PermissionRequired ->
+                        "Bluetooth Permission" to "Tap Grant to connect TV & PC"
+                    BtConnectionState.BluetoothDisabled ->
+                        "Bluetooth Disabled" to "Turn on Bluetooth to connect"
+                    is BtConnectionState.Discoverable ->
+                        "Visible as BT mouse" to "Pair from your TV or Windows PC"
+                    BtConnectionState.Unsupported ->
+                        "Android 9+ Required" to "HID profile requires Android 9 or newer"
+                    else ->
+                        "Quick Auto-Pair" to if (pairedCount > 0) "$pairedCount paired host(s) ready" else "Pair your Smart TV or Laptop"
+                }
+                Text(headline, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = sub,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            when (connectionState) {
+                BtConnectionState.PermissionRequired -> {
+                    Button(
+                        onClick = onGrantPermission,
+                        modifier = Modifier.height(40.dp).testTag("banner_grant_btn"),
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) { Text("Grant") }
+                }
+                BtConnectionState.BluetoothDisabled -> {
+                    Button(
+                        onClick = onEnableBluetooth,
+                        modifier = Modifier.height(40.dp).testTag("banner_enable_bt_btn"),
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) { Text("Turn On") }
+                }
+                BtConnectionState.Unsupported -> {}
+                else -> {
+                    if (pairedCount > 0) {
+                        FilledTonalButton(
+                            onClick = onOpenDevices,
+                            modifier = Modifier.height(40.dp).testTag("banner_devices_btn"),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Devices") }
+                    }
+                    Button(
+                        onClick = onAutoPair,
+                        modifier = Modifier.height(40.dp).testTag("banner_auto_pair_btn"),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) { Text("Auto-Pair") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickShortcutsStrip(
+    showLiveTypeBar: Boolean,
+    onToggleTypeBar: () -> Unit,
+    onHome: () -> Unit,
+    onBack: () -> Unit,
+    onPlayPause: () -> Unit,
+    onVolUp: () -> Unit,
+    onVolDown: () -> Unit,
+    onAltTab: () -> Unit,
+    onWinDesktop: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        QuickChip(
+            label = "Type",
+            icon = Icons.Rounded.Keyboard,
+            active = showLiveTypeBar,
+            onClick = onToggleTypeBar,
+            testTag = "quick_chip_type",
+        )
+        QuickChip(label = "Home", icon = Icons.Rounded.Home, onClick = onHome, testTag = "quick_chip_home")
+        QuickChip(label = "Back", icon = Icons.AutoMirrored.Rounded.ArrowBack, onClick = onBack, testTag = "quick_chip_back")
+        QuickChip(label = "Play", icon = Icons.Rounded.PlayArrow, onClick = onPlayPause, testTag = "quick_chip_play")
+        QuickChip(label = "Vol+", icon = Icons.AutoMirrored.Rounded.VolumeUp, onClick = onVolUp, testTag = "quick_chip_vol_up")
+        QuickChip(label = "Vol-", icon = Icons.Rounded.VolumeDown, onClick = onVolDown, testTag = "quick_chip_vol_down")
+        QuickChip(label = "Alt+Tab", onClick = onAltTab, testTag = "quick_chip_alt_tab")
+        QuickChip(label = "Win+D", onClick = onWinDesktop, testTag = "quick_chip_win_d")
+    }
+}
+
+@Composable
+private fun QuickChip(
+    label: String,
+    icon: ImageVector? = null,
+    active: Boolean = false,
+    onClick: () -> Unit,
+    testTag: String,
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier
+            .height(38.dp)
+            .testTag(testTag),
+        shape = RoundedCornerShape(11.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = if (active) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+            contentColor = if (active) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        ),
+    ) {
+        if (icon != null) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+        }
+        Text(text = label, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+private fun ControllerModeSwitcher(
+    activeTab: ControllerTab,
+    includeTouchpad: Boolean,
+    onSelectTab: (ControllerTab) -> Unit,
+) {
+    val tabs = if (includeTouchpad) {
+        listOf(
+            Triple(ControllerTab.TOUCHPAD, stringResource(R.string.tab_touchpad), Icons.Rounded.Mouse),
+            Triple(ControllerTab.KEYBOARD, stringResource(R.string.tab_keyboard), Icons.Rounded.Keyboard),
+            Triple(ControllerTab.TV_REMOTE, stringResource(R.string.tab_remote), Icons.Rounded.SettingsRemote),
+        )
+    } else {
+        listOf(
+            Triple(ControllerTab.KEYBOARD, stringResource(R.string.tab_keyboard), Icons.Rounded.Keyboard),
+            Triple(ControllerTab.TV_REMOTE, stringResource(R.string.tab_remote), Icons.Rounded.SettingsRemote),
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            tabs.forEach { (tab, title, icon) ->
+                val selected = activeTab == tab
+                Surface(
+                    onClick = { onSelectTab(tab) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .testTag("tab_${tab.name.lowercase()}"),
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
