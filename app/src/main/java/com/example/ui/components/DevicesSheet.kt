@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,11 +22,15 @@ import androidx.compose.material.icons.automirrored.rounded.BluetoothSearching
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BluetoothConnected
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DevicesOther
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.LaptopWindows
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SettingsBluetooth
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,9 +48,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.bluetooth.BtConnectionState
+import com.example.bluetooth.ConnectionDiagnostic
 import com.example.bluetooth.HostDeviceType
 import com.example.bluetooth.PairedHostDevice
 import com.example.ui.theme.ConnectedEmerald
+import com.example.ui.theme.ErrorCoral
 import com.example.ui.theme.PairingAmber
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,17 +60,22 @@ import com.example.ui.theme.PairingAmber
 fun DevicesBottomSheet(
     connectionState: BtConnectionState,
     pairedDevices: List<PairedHostDevice>,
+    diagnostic: ConnectionDiagnostic?,
+    localBluetoothName: String?,
     autoConnect: Boolean,
     onDismiss: () -> Unit,
+    onDismissDiagnostic: () -> Unit,
     onRequestPermissions: () -> Unit,
     onEnableBluetooth: () -> Unit,
     onMakeDiscoverable: () -> Unit,
+    onOpenBluetoothSettings: () -> Unit,
     onRefreshDevices: () -> Unit,
     onConnectDevice: (String) -> Unit,
     onDisconnectDevice: () -> Unit,
     onAutoConnectChanged: (Boolean) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val connectingAddress = (connectionState as? BtConnectionState.Connecting)?.address
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -76,29 +88,116 @@ fun DevicesBottomSheet(
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Devices & Auto-Pairing",
                         style = MaterialTheme.typography.headlineSmall,
                     )
                     Text(
-                        text = "Pair with Smart TVs & Windows Laptops",
+                        text = if (!localBluetoothName.isNullOrBlank()) {
+                            "Phone BT name: $localBluetoothName"
+                        } else {
+                            "Pair with Smart TVs & Windows Laptops"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                IconButton(
+                    onClick = onOpenBluetoothSettings,
+                    modifier = Modifier.testTag("open_bt_settings_button"),
+                ) {
+                    Icon(Icons.Rounded.SettingsBluetooth, contentDescription = "Open Bluetooth Settings")
                 }
                 IconButton(
                     onClick = onRefreshDevices,
                     modifier = Modifier.testTag("refresh_devices_button"),
                 ) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Refresh paired devices")
+                }
+            }
+
+            // Diagnostic / Re-pair Troubleshooting Card when host rejects HID connection
+            if (diagnostic != null) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = ErrorCoral.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, ErrorCoral.copy(alpha = 0.55f)),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ErrorOutline,
+                                contentDescription = null,
+                                tint = ErrorCoral,
+                            )
+                            Text(
+                                text = "Could not connect to ${diagnostic.deviceName}",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = ErrorCoral,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = onDismissDiagnostic,
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Dismiss diagnostic",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                        Text(
+                            text = diagnostic.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (diagnostic.isAlreadyPairedSdpHint) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                OutlinedButton(
+                                    onClick = onOpenBluetoothSettings,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp)
+                                        .testTag("diagnostic_bt_settings_btn"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp),
+                                ) {
+                                    Text("Unpair in BT Settings", maxLines = 1)
+                                }
+                                Button(
+                                    onClick = onMakeDiscoverable,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp)
+                                        .testTag("diagnostic_discoverable_btn"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp),
+                                ) {
+                                    Text("Re-Pair (Discoverable)", maxLines = 1)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -166,8 +265,9 @@ fun DevicesBottomSheet(
                                         },
                                         style = MaterialTheme.typography.titleSmall,
                                     )
+                                    val deviceHint = localBluetoothName ?: "this phone"
                                     Text(
-                                        text = "Open Bluetooth on your Windows PC or Smart TV and select this phone to auto-connect.",
+                                        text = "On Windows (Add device) or TV, select '$deviceHint'. If already paired earlier without BT mouse, remove old pairing on both sides first.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -266,6 +366,7 @@ fun DevicesBottomSheet(
                     items(pairedDevices, key = { it.address }) { device ->
                         PairedDeviceRow(
                             device = device,
+                            isConnecting = connectingAddress == device.address,
                             onConnect = { onConnectDevice(device.address) },
                             onDisconnect = onDisconnectDevice,
                         )
@@ -279,6 +380,7 @@ fun DevicesBottomSheet(
 @Composable
 private fun PairedDeviceRow(
     device: PairedHostDevice,
+    isConnecting: Boolean,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -354,6 +456,20 @@ private fun PairedDeviceRow(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Disconnect")
+                }
+            } else if (isConnecting) {
+                OutlinedButton(
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Connecting")
                 }
             } else {
                 Button(

@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.bluetooth.BluetoothHidController
 import com.example.bluetooth.BtConnectionState
+import com.example.bluetooth.ConnectionDiagnostic
 import com.example.bluetooth.HidKeyMap
 import com.example.bluetooth.HidMotionEngine
 import com.example.bluetooth.HidTelemetry
@@ -31,6 +32,8 @@ data class BtMouseUiState(
     val connectionState: BtConnectionState = BtConnectionState.Initializing,
     val pairedDevices: List<PairedHostDevice> = emptyList(),
     val telemetry: HidTelemetry = HidTelemetry(),
+    val diagnostic: ConnectionDiagnostic? = null,
+    val localBluetoothName: String? = null,
     val activeTab: ControllerTab = ControllerTab.TOUCHPAD,
     val showLiveTypeBar: Boolean = false,
     val liveTypeBuffer: String = "",
@@ -62,13 +65,29 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
         val showSettingsSheet: Boolean = false,
     )
 
-    val uiState: StateFlow<BtMouseUiState> = combine(
-        settingsRepository.settingsFlow,
+    private val bluetoothSnapshot = combine(
         hidController.connectionState,
         hidController.pairedDevices,
         hidController.telemetry,
+        hidController.diagnostic,
+        hidController.localAdapterName,
+    ) { connState, devices, telemetry, diagnostic, localName ->
+        BluetoothSnapshot(connState, devices, telemetry, diagnostic, localName)
+    }
+
+    private data class BluetoothSnapshot(
+        val connectionState: BtConnectionState,
+        val pairedDevices: List<PairedHostDevice>,
+        val telemetry: HidTelemetry,
+        val diagnostic: ConnectionDiagnostic?,
+        val localBluetoothName: String?,
+    )
+
+    val uiState: StateFlow<BtMouseUiState> = combine(
+        settingsRepository.settingsFlow,
+        bluetoothSnapshot,
         _localUi,
-    ) { settings, connState, devices, telemetry, local ->
+    ) { settings, bt, local ->
         hidController.updateSettings(
             pollingRateHz = settings.pollingRateHz,
             autoConnect = settings.autoConnect,
@@ -76,9 +95,11 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
         )
         BtMouseUiState(
             settings = settings,
-            connectionState = connState,
-            pairedDevices = devices,
-            telemetry = telemetry,
+            connectionState = bt.connectionState,
+            pairedDevices = bt.pairedDevices,
+            telemetry = bt.telemetry,
+            diagnostic = bt.diagnostic,
+            localBluetoothName = bt.localBluetoothName,
             activeTab = local.activeTab,
             showLiveTypeBar = local.showLiveTypeBar,
             liveTypeBuffer = local.liveTypeBuffer,
@@ -260,6 +281,10 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
 
     fun disconnectHost() {
         hidController.disconnectCurrent()
+    }
+
+    fun clearDiagnostic() {
+        hidController.clearDiagnostic()
     }
 
     fun onDiscoverableLaunched(durationSeconds: Int = 300) {

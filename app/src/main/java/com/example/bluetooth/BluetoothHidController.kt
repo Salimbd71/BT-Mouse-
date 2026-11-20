@@ -52,17 +52,27 @@ class BluetoothHidController(
     private val _telemetry = MutableStateFlow(HidTelemetry())
     val telemetry: StateFlow<HidTelemetry> = _telemetry.asStateFlow()
 
+    private val _diagnostic = MutableStateFlow<ConnectionDiagnostic?>(null)
+    val diagnostic: StateFlow<ConnectionDiagnostic?> = _diagnostic.asStateFlow()
+
+    private val _localAdapterName = MutableStateFlow<String?>(null)
+    val localAdapterName: StateFlow<String?> = _localAdapterName.asStateFlow()
+
     private var hidDevice: BluetoothHidDevice? = null
     private var connectedHost: BluetoothDevice? = null
     private var isAppRegistered = false
+    private var attemptedQosFallback = false
     private var receiverRegistered = false
     private var autoConnectEnabled = true
     private var preferredHostAddress: String? = null
+    private var pendingConnectAddress: String? = null
+    private var activeConnectAttemptAddress: String? = null
 
     private var activeButtonsMask = AtomicInteger(0)
     private var activePollingHz = 125
     private var motionLoopJob: Job? = null
     private var discoverableTimerJob: Job? = null
+    private var connectTimeoutJob: Job? = null
     private var txPulseJob: Job? = null
     private var packetCounter = 0L
 
@@ -76,6 +86,8 @@ class BluetoothHidController(
                     if (state == BluetoothAdapter.STATE_ON) {
                         initialize()
                     } else if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
+                        connectTimeoutJob?.cancel()
+                        activeConnectAttemptAddress = null
                         connectedHost = null
                         isAppRegistered = false
                         _connectionState.value = BtConnectionState.BluetoothDisabled
@@ -87,6 +99,7 @@ class BluetoothHidController(
                     val device = getParcelableDevice(intent)
                     val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
                     if (bondState == BluetoothDevice.BOND_BONDED && device != null && autoConnectEnabled) {
+                        _diagnostic.value = null
                         connectDevice(device)
                     }
                 }
@@ -99,7 +112,7 @@ class BluetoothHidController(
                         _connectionState.value is BtConnectionState.Discoverable
                     ) {
                         discoverableTimerJob?.cancel()
-                        _connectionState.value = if (isAppRegistered) BtConnectionState.Ready else BtConnectionState.Initializing
+                        updateConnectionStateFromHost()
                     }
                 }
             }
@@ -143,6 +156,10 @@ class BluetoothHidController(
         _telemetry.value = _telemetry.value.copy(activeRateHz = pollingRateHz)
     }
 
+    fun clearDiagnostic() {
+        _diagnostic.value = null
+    }
+
     @SuppressLint("MissingPermission")
     fun initialize() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
@@ -158,6 +175,7 @@ class BluetoothHidController(
             _connectionState.value = BtConnectionState.Unsupported
             return
         }
+        _localAdapterName.value = runCatching { adapter.name }.getOrNull()
         registerReceiversIfNeeded()
 
         if (!adapter.isEnabled) {
@@ -176,7 +194,8 @@ class BluetoothHidController(
         if (hidDevice == null) {
             adapter.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
         } else {
-            registerHidApp(hidDevice!!)
+            attemptedQosFallback = false
+            registerHidApp(hidDevice!!, useLowLatencyQos = true)
         }
     }
 
@@ -201,12 +220,15 @@ class BluetoothHidController(
             if (profile == BluetoothProfile.HID_DEVICE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val device = proxy as BluetoothHidDevice
                 hidDevice = device
-                registerHidApp(device)
+                attemptedQosFallback = false
+                registerHidApp(device, useLowLatencyQos = true)
             }
         }
 
         override fun onServiceDisconnected(profile: Int) {
             if (profile == BluetoothProfile.HID_DEVICE) {
+                connectTimeoutJob?.cancel()
+                activeConnectAttemptAddress = null
                 hidDevice = null
                 connectedHost = null
                 isAppRegistered = false
@@ -217,7 +239,7 @@ class BluetoothHidController(
 
     @RequiresApi(Build.VERSION_CODES.P)
     @SuppressLint("MissingPermission")
-    private fun registerHidApp(device: BluetoothHidDevice) {
+    private fun registerHidApp(device: BluetoothHidDevice, useLowLatencyQos: Boolean) {
         if (!hasRequiredPermissions()) return
         val sdp = BluetoothHidDeviceAppSdpSettings(
             "BT mouse",
@@ -226,16 +248,33 @@ class BluetoothHidController(
             BluetoothHidDevice.SUBCLASS1_COMBO,
             HidDescriptor.COMPOSITE_DESCRIPTOR,
         )
-        // Low-latency QoS tuning for responsive pointer & wheel frames (4ms max latency)
-        val outQos = BluetoothHidDeviceAppQosSettings(
-            BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
-            800,
-            9,
-            0,
-            4000,
-            4000,
-        )
-        device.registerApp(sdp, null, outQos, hidExecutor, hidCallback)
+        val outQos = if (useLowLatencyQos) {
+            BluetoothHidDeviceAppQosSettings(
+                BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
+                800,
+                9,
+                0,
+                4000,
+                4000,
+            )
+        } else {
+            null
+        }
+        val accepted = runCatching {
+            device.registerApp(sdp, null, outQos, hidExecutor, hidCallback)
+        }.getOrDefault(false)
+
+        if (!accepted && useLowLatencyQos && !attemptedQosFallback) {
+            attemptedQosFallback = true
+            registerHidApp(device, useLowLatencyQos = false)
+        } else if (!accepted) {
+            _diagnostic.value = ConnectionDiagnostic(
+                deviceName = "Bluetooth HID",
+                message = "Another Bluetooth HID app may be active, or your phone's Bluetooth stack rejected HID registration. Toggle Bluetooth off and on, then retry.",
+                isAlreadyPairedSdpHint = false,
+            )
+            _connectionState.value = BtConnectionState.Ready
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.P)
@@ -244,17 +283,30 @@ class BluetoothHidController(
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             isAppRegistered = registered
             if (registered) {
-                if (pluggedDevice != null) {
-                    connectedHost = pluggedDevice
+                val currentConnected = pluggedDevice ?: runCatching {
+                    hidDevice?.connectedDevices?.firstOrNull()
+                }.getOrNull()
+                if (currentConnected != null) {
+                    connectedHost = currentConnected
                 }
                 refreshPairedDevices()
                 updateConnectionStateFromHost()
-                if (connectedHost == null && autoConnectEnabled) {
+
+                val pendingAddr = pendingConnectAddress
+                pendingConnectAddress = null
+                if (pendingAddr != null) {
+                    connectByAddress(pendingAddr)
+                } else if (connectedHost == null && autoConnectEnabled) {
                     attemptAutoConnect()
                 }
             } else {
                 connectedHost = null
-                _connectionState.value = BtConnectionState.Ready
+                if (!attemptedQosFallback && hidDevice != null) {
+                    attemptedQosFallback = true
+                    registerHidApp(hidDevice!!, useLowLatencyQos = false)
+                } else {
+                    _connectionState.value = BtConnectionState.Ready
+                }
             }
         }
 
@@ -262,7 +314,10 @@ class BluetoothHidController(
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
+                    connectTimeoutJob?.cancel()
                     discoverableTimerJob?.cancel()
+                    activeConnectAttemptAddress = null
+                    _diagnostic.value = null
                     connectedHost = device
                     val name = safeDeviceName(device)
                     val type = classifyDevice(device)
@@ -281,13 +336,71 @@ class BluetoothHidController(
                     )
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    if (connectedHost?.address == device.address) {
+                    connectTimeoutJob?.cancel()
+                    val wasAttemptingThisDevice = activeConnectAttemptAddress == device.address
+                    val wasPreviouslyConnected = connectedHost?.address == device.address
+                    activeConnectAttemptAddress = null
+                    if (wasPreviouslyConnected) {
                         connectedHost = null
+                    }
+                    if (wasAttemptingThisDevice && !wasPreviouslyConnected) {
+                        val name = safeDeviceName(device)
+                        _diagnostic.value = ConnectionDiagnostic(
+                            deviceName = name,
+                            message = "$name declined the HID Mouse/Keyboard connection. If this laptop or TV was paired before installing BT mouse, unpair/remove it on both devices and pair again using Auto-Pair.",
+                            isAlreadyPairedSdpHint = true,
+                        )
                     }
                     refreshPairedDevices()
                     updateConnectionStateFromHost()
                 }
             }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
+            val hid = hidDevice ?: return
+            if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
+                val payload = when (id.toInt()) {
+                    HidDescriptor.REPORT_ID_MOUSE -> ByteArray(5)
+                    HidDescriptor.REPORT_ID_KEYBOARD -> ByteArray(8)
+                    HidDescriptor.REPORT_ID_CONSUMER -> ByteArray(2)
+                    else -> null
+                }
+                if (payload != null) {
+                    hid.replyReport(device, type, id, payload)
+                } else {
+                    hid.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)
+                }
+            } else {
+                hid.reportError(device, BluetoothHidDevice.ERROR_RSP_UNSUPPORTED_REQ)
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onSetReport(device: BluetoothDevice, type: Byte, id: Byte, data: ByteArray?) {
+            // Host (Windows/TV) may send Keyboard Output LED state (NumLock/CapsLock); accept cleanly.
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onSetProtocol(device: BluetoothDevice, protocol: Byte) {
+            // Acknowledge Windows/TV protocol selection (Report vs Boot mode).
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onVirtualCableUnplug(device: BluetoothDevice) {
+            connectTimeoutJob?.cancel()
+            activeConnectAttemptAddress = null
+            if (connectedHost?.address == device.address) {
+                connectedHost = null
+            }
+            _diagnostic.value = ConnectionDiagnostic(
+                deviceName = safeDeviceName(device),
+                message = "The host removed or unplugged the Bluetooth HID link. Re-pair from Auto-Pair if needed.",
+                isAlreadyPairedSdpHint = true,
+            )
+            refreshPairedDevices()
+            updateConnectionStateFromHost()
         }
     }
 
@@ -307,9 +420,16 @@ class BluetoothHidController(
             return
         }
         val adapter = bluetoothAdapter ?: return
+        _localAdapterName.value = runCatching { adapter.name }.getOrNull()
         if (!adapter.isEnabled) {
             _pairedDevices.value = emptyList()
             return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && connectedHost == null) {
+            val active = runCatching { hidDevice?.connectedDevices?.firstOrNull() }.getOrNull()
+            if (active != null) {
+                connectedHost = active
+            }
         }
         val connectedAddr = connectedHost?.address
         val list = adapter.bondedDevices
@@ -329,7 +449,13 @@ class BluetoothHidController(
     @SuppressLint("MissingPermission")
     fun connectByAddress(address: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || !hasRequiredPermissions()) return
+        if (!isAppRegistered || hidDevice == null) {
+            pendingConnectAddress = address
+            initialize()
+            return
+        }
         val device = bluetoothAdapter?.bondedDevices?.firstOrNull { it.address == address } ?: return
+        _diagnostic.value = null
         connectDevice(device)
     }
 
@@ -337,15 +463,47 @@ class BluetoothHidController(
     private fun connectDevice(device: BluetoothDevice) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || !hasRequiredPermissions()) return
         val hid = hidDevice ?: return
+        if (!isAppRegistered) {
+            pendingConnectAddress = device.address
+            return
+        }
+        val targetName = safeDeviceName(device)
         if (connectedHost != null && connectedHost?.address != device.address) {
             hid.disconnect(connectedHost)
         }
+        activeConnectAttemptAddress = device.address
         _connectionState.value = BtConnectionState.Connecting(
-            deviceName = safeDeviceName(device),
+            deviceName = targetName,
             address = device.address,
         )
+
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = scope.launch {
+            delay(8500L)
+            if (activeConnectAttemptAddress == device.address && connectedHost?.address != device.address) {
+                activeConnectAttemptAddress = null
+                _diagnostic.value = ConnectionDiagnostic(
+                    deviceName = targetName,
+                    message = "Could not connect to $targetName. Make sure Bluetooth is open on the laptop/TV—or if it was paired before installing BT mouse, remove the old pairing on both devices and pair again via Auto-Pair.",
+                    isAlreadyPairedSdpHint = true,
+                )
+                updateConnectionStateFromHost()
+            }
+        }
+
         hidExecutor.execute {
-            hid.connect(device)
+            runCatching { device.fetchUuidsWithSdp() }
+            val initiated = runCatching { hid.connect(device) }.getOrDefault(false)
+            if (!initiated) {
+                connectTimeoutJob?.cancel()
+                activeConnectAttemptAddress = null
+                _diagnostic.value = ConnectionDiagnostic(
+                    deviceName = targetName,
+                    message = "Android could not start an HID link to $targetName. Remove the old pairing on both your phone and laptop, then tap Make Discoverable & Auto-Pair.",
+                    isAlreadyPairedSdpHint = true,
+                )
+                updateConnectionStateFromHost()
+            }
         }
     }
 
@@ -360,6 +518,7 @@ class BluetoothHidController(
     }
 
     fun startDiscoverableCountdown(durationSeconds: Int = 300) {
+        _diagnostic.value = null
         discoverableTimerJob?.cancel()
         discoverableTimerJob = scope.launch {
             var remaining = durationSeconds
@@ -555,6 +714,7 @@ class BluetoothHidController(
 
     @SuppressLint("MissingPermission")
     fun release() {
+        connectTimeoutJob?.cancel()
         motionLoopJob?.cancel()
         discoverableTimerJob?.cancel()
         txPulseJob?.cancel()

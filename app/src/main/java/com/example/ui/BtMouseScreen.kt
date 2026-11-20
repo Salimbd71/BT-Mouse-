@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -69,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +98,7 @@ fun BtMouseScreen(
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -142,6 +145,12 @@ fun BtMouseScreen(
         }
     }
 
+    fun openBluetoothSettings() {
+        runCatching {
+            context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        }
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -182,6 +191,7 @@ fun BtMouseScreen(
                     QuickConnectionBanner(
                         connectionState = uiState.connectionState,
                         pairedCount = uiState.pairedDevices.size,
+                        hasDiagnostic = uiState.diagnostic != null,
                         onGrantPermission = ::launchPermissions,
                         onEnableBluetooth = ::launchEnableBluetooth,
                         onAutoPair = ::launchDiscoverable,
@@ -391,11 +401,15 @@ fun BtMouseScreen(
         DevicesBottomSheet(
             connectionState = uiState.connectionState,
             pairedDevices = uiState.pairedDevices,
+            diagnostic = uiState.diagnostic,
+            localBluetoothName = uiState.localBluetoothName,
             autoConnect = uiState.settings.autoConnect,
             onDismiss = { viewModel.setDevicesSheetVisible(false) },
+            onDismissDiagnostic = viewModel::clearDiagnostic,
             onRequestPermissions = ::launchPermissions,
             onEnableBluetooth = ::launchEnableBluetooth,
             onMakeDiscoverable = ::launchDiscoverable,
+            onOpenBluetoothSettings = ::openBluetoothSettings,
             onRefreshDevices = viewModel::refreshDevices,
             onConnectDevice = viewModel::connectToHost,
             onDisconnectDevice = viewModel::disconnectHost,
@@ -594,6 +608,7 @@ private fun TopControlHeader(
 private fun QuickConnectionBanner(
     connectionState: BtConnectionState,
     pairedCount: Int,
+    hasDiagnostic: Boolean,
     onGrantPermission: () -> Unit,
     onEnableBluetooth: () -> Unit,
     onAutoPair: () -> Unit,
@@ -601,8 +616,15 @@ private fun QuickConnectionBanner(
 ) {
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+        color = if (hasDiagnostic) {
+            ErrorCoral.copy(alpha = 0.12f)
+        } else {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
+        },
+        border = BorderStroke(
+            1.dp,
+            if (hasDiagnostic) ErrorCoral.copy(alpha = 0.55f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+        ),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -613,15 +635,17 @@ private fun QuickConnectionBanner(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                val (headline, sub) = when (connectionState) {
-                    BtConnectionState.PermissionRequired ->
+                val (headline, sub) = when {
+                    connectionState == BtConnectionState.PermissionRequired ->
                         "Bluetooth Permission" to "Tap Grant to connect TV & PC"
-                    BtConnectionState.BluetoothDisabled ->
+                    connectionState == BtConnectionState.BluetoothDisabled ->
                         "Bluetooth Disabled" to "Turn on Bluetooth to connect"
-                    is BtConnectionState.Discoverable ->
-                        "Visible as BT mouse" to "Pair from your TV or Windows PC"
-                    BtConnectionState.Unsupported ->
+                    connectionState is BtConnectionState.Discoverable ->
+                        "Discoverable Mode" to "Pair from your TV or Windows PC"
+                    connectionState == BtConnectionState.Unsupported ->
                         "Android 9+ Required" to "HID profile requires Android 9 or newer"
+                    hasDiagnostic ->
+                        "Connection Declined" to "Tap Devices for re-pair steps"
                     else ->
                         "Quick Auto-Pair" to if (pairedCount > 0) "$pairedCount paired host(s) ready" else "Pair your Smart TV or Laptop"
                 }

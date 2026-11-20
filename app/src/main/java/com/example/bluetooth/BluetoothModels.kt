@@ -29,3 +29,9 @@ data class HidTelemetry(
     val activeRateHz: Int = 125,
     val isTransmitting: Boolean = false,
 )
+
+data class ConnectionDiagnostic(
+    val deviceName: String,
+    val message: String,
+    val isAlreadyPairedSdpHint: Boolean = false,
+)
