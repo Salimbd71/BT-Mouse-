@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Home
@@ -30,7 +31,6 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
-import androidx.compose.material.icons.rounded.VolumeDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -178,7 +178,7 @@ fun TvRemoteDeckSection(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             RemotePillButton(
-                icon = Icons.Rounded.VolumeDown,
+                icon = Icons.AutoMirrored.Rounded.VolumeDown,
                 label = "Vol -",
                 onClick = { tap(); onSendConsumer(HidKeyMap.CONSUMER_VOLUME_DOWN) },
                 modifier = Modifier.weight(1f).testTag("tv_vol_down"),

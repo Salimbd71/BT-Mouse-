@@ -18,7 +18,7 @@ A fast, low-latency Android Bluetooth HID wireless mouse, touchpad, scroll wheel
 - **Dark Mode Support**: System, Dark, and Light themes persisted locally.
 
 ## Building APKs via GitHub Actions (`release.yml`)
-This repository includes `.github/workflows/release.yml` to automatically run tests and build both **Debug** and **Release** APKs on pushes to `main`/`master`, version tags (`v*`), or manual workflow dispatch (`Actions -> Build & Release APK -> Run workflow`).
+This repository includes `.github/workflows/release.yml` configured for **manual execution only** (`Actions -> Build & Release APK -> Run workflow`), with a **Run unit tests before building APKs** checkbox so it never runs automatically on push. It builds both **Debug** and **Release** APKs and uploads them as workflow artifacts.
 
 ### Optional Release Signing Secrets
 If no signing secrets are configured, the workflow generates a temporary keystore so your APK builds cleanly right away. For permanent Play Store / consistent release signing, add these repository secrets in **Settings -> Secrets and variables -> Actions**:

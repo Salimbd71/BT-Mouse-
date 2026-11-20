@@ -17,9 +17,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.BluetoothSearching
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BluetoothConnected
-import androidx.compose.material.icons.rounded.BluetoothSearching
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DevicesOther
 import androidx.compose.material.icons.rounded.LaptopWindows
@@ -149,7 +149,7 @@ fun DevicesBottomSheet(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.BluetoothSearching,
+                                    imageVector = Icons.AutoMirrored.Rounded.BluetoothSearching,
                                     contentDescription = null,
                                     tint = if (connectionState is BtConnectionState.Discoverable) {
                                         PairingAmber

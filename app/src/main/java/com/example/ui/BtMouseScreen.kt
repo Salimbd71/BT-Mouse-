@@ -36,10 +36,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.BluetoothSearching
 import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bluetooth
-import androidx.compose.material.icons.rounded.BluetoothSearching
 import androidx.compose.material.icons.rounded.BrightnessAuto
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.DarkMode
@@ -52,7 +53,6 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SettingsRemote
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Tv
-import androidx.compose.material.icons.rounded.VolumeDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -446,12 +446,12 @@ private fun TopControlHeader(
             is BtConnectionState.Connecting -> Triple(
                 PairingAmber,
                 "Connecting ${connectionState.deviceName}…",
-                Icons.Rounded.BluetoothSearching,
+                Icons.AutoMirrored.Rounded.BluetoothSearching,
             )
             is BtConnectionState.Discoverable -> Triple(
                 PairingAmber,
                 "Pairable (${connectionState.secondsRemaining}s)",
-                Icons.Rounded.BluetoothSearching,
+                Icons.AutoMirrored.Rounded.BluetoothSearching,
             )
             BtConnectionState.Ready -> Triple(
                 MaterialTheme.colorScheme.primary,
@@ -704,7 +704,7 @@ private fun QuickShortcutsStrip(
         QuickChip(label = "Back", icon = Icons.AutoMirrored.Rounded.ArrowBack, onClick = onBack, testTag = "quick_chip_back")
         QuickChip(label = "Play", icon = Icons.Rounded.PlayArrow, onClick = onPlayPause, testTag = "quick_chip_play")
         QuickChip(label = "Vol+", icon = Icons.AutoMirrored.Rounded.VolumeUp, onClick = onVolUp, testTag = "quick_chip_vol_up")
-        QuickChip(label = "Vol-", icon = Icons.Rounded.VolumeDown, onClick = onVolDown, testTag = "quick_chip_vol_down")
+        QuickChip(label = "Vol-", icon = Icons.AutoMirrored.Rounded.VolumeDown, onClick = onVolDown, testTag = "quick_chip_vol_down")
         QuickChip(label = "Alt+Tab", onClick = onAltTab, testTag = "quick_chip_alt_tab")
         QuickChip(label = "Win+D", onClick = onWinDesktop, testTag = "quick_chip_win_d")
     }
