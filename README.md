@@ -23,19 +23,21 @@ The companion receiver lives in `windows-receiver/` (.NET 8 WinForms, single-fil
 - Running **`BTMouseReceiver-Setup.exe`** installs the receiver, optionally registers startup in the system tray, and automatically adds the Windows Firewall allow rule for UDP ports `51920` and `51921`.
 - Connect your phone and PC to the same Wi-Fi (or phone hotspot), switch **BT mouse** to **Wi-Fi** in the top bar, and tap your PC name.
 
-## Building APKs & Windows `.exe` via GitHub Actions (`release.yml`)
-This repository includes `.github/workflows/release.yml` configured for **manual execution only** (`Actions -> Build & Release APK & Windows EXE -> Run workflow`), with checkboxes for:
+## Building & Releasing APKs and Windows `.exe` via GitHub Actions (`release.yml`)
+This repository includes `.github/workflows/release.yml` configured for **manual execution only** (`Actions -> Build & Release APK & Windows EXE -> Run workflow`), with:
+- **App version (`app_version`)** input box (default `1.0`) — automatically updates Android `versionName`/`versionCode`, Windows Receiver version, and `Settings -> About`.
 - **Run unit tests before building APKs** (`run_unit_tests`, default `true`)
 - **Build Windows Wi-Fi Receiver (.exe installer & portable)** (`build_windows_receiver`, default `true`)
 
-Outputs uploaded as workflow artifacts:
-- `bt-mouse-debug-apk` & `bt-mouse-release-apk`
-- `bt-mouse-windows-setup-exe` (`BTMouseReceiver-Setup.exe` — direct Windows installer)
-- `bt-mouse-windows-portable-exe` (`BTMouseReceiver.exe` — standalone portable executable)
+At the end of the workflow run, signed APKs and Windows `.exe` builds are uploaded as workflow artifacts **and automatically published directly to a GitHub Release (`v<version>`)**:
+- `BT-mouse-v<version>-release.apk` & `BT-mouse-v<version>-debug.apk`
+- `BTMouseReceiver-Setup-v<version>.exe` (direct Windows installer)
+- `BTMouseReceiver-v<version>.exe` (standalone portable executable)
 
-### Optional Release Signing Secrets
-If no signing secrets are configured, the workflow generates a temporary keystore so your APK builds cleanly right away. For consistent release signing, add these repository secrets in **Settings -> Secrets and variables -> Actions**:
+### Release Signing Secrets
+The workflow uses repository secrets in **Settings -> Secrets and variables -> Actions** to sign the release APK automatically:
 - `KEYSTORE_BASE64`: Base64-encoded `.jks` upload keystore (`base64 -w 0 my-upload-key.jks`)
 - `STORE_PASSWORD`: Keystore password
 - `KEY_PASSWORD`: Key password for the `upload` alias
+
 

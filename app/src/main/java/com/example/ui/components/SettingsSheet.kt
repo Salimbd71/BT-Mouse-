@@ -1,16 +1,32 @@
 package com.example.ui.components
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
@@ -21,8 +37,18 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.BuildConfig
 import com.example.data.AppSettings
 import com.example.data.ThemeMode
 import kotlin.math.roundToInt
@@ -202,7 +228,212 @@ fun SettingsBottomSheet(
                 onCheckedChange = onHapticChanged,
                 testTag = "haptic_switch",
             )
+
+            AboutDeveloperCard()
         }
+    }
+}
+
+@Composable
+private fun AboutDeveloperCard() {
+    val context = LocalContext.current
+    val phoneNumber = "01737462871"
+    val whatsappUri = "https://wa.me/8801737462871"
+    val facebookUri = "https://fb.com/salim.naogaon"
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.testTag("settings_about_card"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "About",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Version",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = BuildConfig.VERSION_NAME,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag("about_version_text"),
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Developer",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Salim",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.testTag("about_developer_text"),
+                )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilledTonalButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phoneNumber")))
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("about_call_button"),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Call,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Call me", maxLines = 1)
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(whatsappUri)))
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("about_whatsapp_button"),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = Color(0xFF1B4332).copy(alpha = 0.22f),
+                        contentColor = Color(0xFF25D366),
+                    ),
+                ) {
+                    WhatsAppGlyph(modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("WhatsApp", maxLines = 1)
+                }
+
+                FilledTonalIconButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(facebookUri)))
+                        }
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("about_facebook_button"),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = Color(0xFF1877F2).copy(alpha = 0.16f),
+                        contentColor = Color(0xFF1877F2),
+                    ),
+                ) {
+                    FacebookGlyph(modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhatsAppGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val radius = w * 0.42f
+        val center = Offset(w * 0.52f, h * 0.48f)
+
+        drawCircle(
+            color = Color(0xFF25D366),
+            radius = radius,
+            center = center,
+            style = Stroke(width = w * 0.12f),
+        )
+        val tail = Path().apply {
+            moveTo(w * 0.20f, h * 0.72f)
+            lineTo(w * 0.10f, h * 0.92f)
+            lineTo(w * 0.34f, h * 0.84f)
+            close()
+        }
+        drawPath(tail, color = Color(0xFF25D366))
+
+        val handset = Path().apply {
+            moveTo(w * 0.38f, h * 0.34f)
+            lineTo(w * 0.44f, h * 0.44f)
+            quadraticTo(w * 0.52f, h * 0.56f, w * 0.64f, h * 0.62f)
+            lineTo(w * 0.68f, h * 0.56f)
+        }
+        drawPath(
+            path = handset,
+            color = Color(0xFF25D366),
+            style = Stroke(width = w * 0.11f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+    }
+}
+
+@Composable
+private fun FacebookGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        drawCircle(
+            color = Color(0xFF1877F2),
+            radius = w * 0.48f,
+        )
+        // Crisp "f" glyph inside Facebook blue badge
+        val stemWidth = w * 0.15f
+        val stemX = w * 0.48f
+        drawRect(
+            color = Color.White,
+            topLeft = Offset(stemX, h * 0.30f),
+            size = Size(stemWidth, h * 0.68f),
+        )
+        val topHook = Path().apply {
+            moveTo(stemX, h * 0.33f)
+            quadraticTo(stemX, h * 0.19f, w * 0.68f, h * 0.20f)
+            lineTo(w * 0.71f, h * 0.20f)
+            lineTo(w * 0.71f, h * 0.31f)
+            lineTo(w * 0.63f, h * 0.31f)
+            close()
+        }
+        drawPath(topHook, color = Color.White)
+        // Horizontal crossbar
+        drawRect(
+            color = Color.White,
+            topLeft = Offset(w * 0.35f, h * 0.46f),
+            size = Size(w * 0.34f, h * 0.12f),
+        )
     }
 }
 

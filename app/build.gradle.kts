@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.btmouse.qxvmrt"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = providers.gradleProperty("appVersionCode").orNull?.trim()?.toIntOrNull() ?: 1
+    versionName = providers.gradleProperty("appVersionName").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

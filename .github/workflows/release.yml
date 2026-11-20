@@ -1,8 +1,16 @@
 name: Build & Release APK & Windows EXE
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
+      app_version:
+        description: "App version (current: 1.0)"
+        required: true
+        type: string
+        default: "1.0"
       run_unit_tests:
         description: "Run unit tests before building APKs"
         required: false
@@ -22,6 +30,31 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Resolve version properties
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAW_VER="${{ inputs.app_version }}"
+          VERSION_NAME="${RAW_VER#v}"
+          if [ -z "$VERSION_NAME" ]; then
+            VERSION_NAME="1.0"
+          fi
+          IFS='.' read -r MAJOR MINOR PATCH _ <<< "${VERSION_NAME//[^0-9.]/}"
+          MAJOR="${MAJOR:-1}"
+          MINOR="${MINOR:-0}"
+          PATCH="${PATCH:-0}"
+          if [ "$VERSION_NAME" = "1.0" ]; then
+            VERSION_CODE=1
+          else
+            VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+          fi
+          if [ "$VERSION_CODE" -lt 1 ]; then
+            VERSION_CODE="${{ github.run_number }}"
+          fi
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "Resolved Android version: $VERSION_NAME (versionCode=$VERSION_CODE)"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -107,6 +140,7 @@ jobs:
             echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> "$GITHUB_ENV"
             echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
+            echo "Using repository release signing secrets."
           else
             rm -f my-upload-key.jks
             keytool -genkeypair -noprompt \
@@ -114,21 +148,22 @@ jobs:
               -alias upload \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass android -keypass android \
-              -dname "CN=BT mouse, OU=Mobile, O=BTmouse, L=Dhaka, S=Dhaka, C=BD"
+              -dname "CN=BT mouse, OU=Mobile, O=BTmouse, L=Naogaon, S=Rajshahi, C=BD"
             echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
             echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
+            echo "Signing secrets not set; using temporary release keystore."
           fi
 
       - name: Run unit tests
         if: ${{ inputs.run_unit_tests }}
-        run: gradle :app:testDebugUnitTest --no-daemon
+        run: gradle :app:testDebugUnitTest --no-daemon -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE"
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE"
 
       - name: Build Release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        run: gradle :app:assembleRelease --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE"
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v6
@@ -161,14 +196,21 @@ jobs:
       - name: Publish self-contained BTMouseReceiver.exe
         shell: pwsh
         run: |
+          $rawVer = "${{ inputs.app_version }}".TrimStart('v')
+          if ([string]::IsNullOrWhiteSpace($rawVer)) { $rawVer = "1.0" }
+          $numVer = ($rawVer -replace '[^0-9.]', '')
+          if ([string]::IsNullOrWhiteSpace($numVer)) { $numVer = "1.0" }
           dotnet publish windows-receiver/BTMouseReceiver.csproj `
             -c Release `
             -r win-x64 `
+            -p:Version=$numVer `
             -o windows-receiver/publish
 
       - name: Build BTMouseReceiver-Setup.exe with Inno Setup
         shell: pwsh
         run: |
+          $rawVer = "${{ inputs.app_version }}".TrimStart('v')
+          if ([string]::IsNullOrWhiteSpace($rawVer)) { $rawVer = "1.0" }
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
@@ -177,7 +219,7 @@ jobs:
             $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
             if ($cmd) { $iscc = $cmd.Source }
           }
-          & $iscc windows-receiver\installer.iss
+          & $iscc "/DMyAppVersion=$rawVer" windows-receiver\installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows Setup Installer (.exe)
@@ -193,3 +235,73 @@ jobs:
           name: bt-mouse-windows-portable-exe
           path: windows-receiver/publish/BTMouseReceiver.exe
           if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-apk, build-windows-exe]
+    if: ${{ always() && needs.build-apk.result == 'success' && (needs.build-windows-exe.result == 'success' || needs.build-windows-exe.result == 'skipped') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download Debug APK
+        uses: actions/download-artifact@v8
+        with:
+          name: bt-mouse-debug-apk
+          path: dist/apk-debug
+
+      - name: Download Release APK
+        uses: actions/download-artifact@v8
+        with:
+          name: bt-mouse-release-apk
+          path: dist/apk-release
+
+      - name: Download Windows Setup Installer
+        if: ${{ inputs.build_windows_receiver }}
+        uses: actions/download-artifact@v8
+        with:
+          name: bt-mouse-windows-setup-exe
+          path: dist/win-setup
+
+      - name: Download Windows Portable EXE
+        if: ${{ inputs.build_windows_receiver }}
+        uses: actions/download-artifact@v8
+        with:
+          name: bt-mouse-windows-portable-exe
+          path: dist/win-portable
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAW_VER="${{ inputs.app_version }}"
+          VERSION_NAME="${RAW_VER#v}"
+          if [ -z "$VERSION_NAME" ]; then
+            VERSION_NAME="1.0"
+          fi
+          TAG="v${VERSION_NAME}"
+
+          mkdir -p release-assets
+          RELEASE_APK=$(find dist/apk-release -name "*.apk" | head -n 1)
+          DEBUG_APK=$(find dist/apk-debug -name "*.apk" | head -n 1)
+          cp "$RELEASE_APK" "release-assets/BT-mouse-v${VERSION_NAME}-release.apk"
+          cp "$DEBUG_APK" "release-assets/BT-mouse-v${VERSION_NAME}-debug.apk"
+
+          if [ -d dist/win-setup ] && [ -f dist/win-setup/BTMouseReceiver-Setup.exe ]; then
+            cp dist/win-setup/BTMouseReceiver-Setup.exe "release-assets/BTMouseReceiver-Setup-v${VERSION_NAME}.exe"
+          fi
+          if [ -d dist/win-portable ] && [ -f dist/win-portable/BTMouseReceiver.exe ]; then
+            cp dist/win-portable/BTMouseReceiver.exe "release-assets/BTMouseReceiver-v${VERSION_NAME}.exe"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --title "BT mouse $TAG" \
+              --notes "BT mouse $TAG release (Android APKs + Windows Wi-Fi Receiver)"
+          fi

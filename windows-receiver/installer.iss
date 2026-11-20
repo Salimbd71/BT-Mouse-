@@ -1,6 +1,8 @@
 #define MyAppName "BT mouse Wi-Fi Receiver"
-#define MyAppVersion "1.0.0"
-#define MyAppPublisher "BT mouse"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0"
+#endif
+#define MyAppPublisher "Salim"
 #define MyAppExeName "BTMouseReceiver.exe"
 
 [Setup]

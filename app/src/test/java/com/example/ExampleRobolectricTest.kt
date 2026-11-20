@@ -13,9 +13,10 @@ import org.robolectric.annotation.Config
 class ExampleRobolectricTest {
 
     @Test
-    fun `read app name from context`() {
+    fun `read app name and version from context`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("BT mouse", appName)
+        assertEquals("1.0", BuildConfig.VERSION_NAME)
     }
 }
