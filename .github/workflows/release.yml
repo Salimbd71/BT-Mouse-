@@ -32,7 +32,51 @@ jobs:
           java-version: "21"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK_ROOT" ] || [ ! -w "$SDK_ROOT" ]; then
+            SDK_ROOT="$HOME/android-sdk"
+            mkdir -p "$SDK_ROOT"
+          fi
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
+          SDKMANAGER=""
+          for candidate in \
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager \
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" \
+            /usr/local/lib/android/sdk/cmdline-tools/*/bin/sdkmanager; do
+            if [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$SDKMANAGER" ]; then
+            mkdir -p "$SDK_ROOT/cmdline-tools"
+            curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o /tmp/cmdline-tools.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
+            rm -rf "$SDK_ROOT/cmdline-tools/latest"
+            mv /tmp/cmdline-tools-extract/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
+            rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null
+          set -o pipefail
+
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "platforms;android-36.1" \
+            "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
