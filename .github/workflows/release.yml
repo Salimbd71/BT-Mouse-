@@ -12,19 +12,35 @@ on:
         type: string
         default: "1.0"
       run_unit_tests:
-        description: "Run unit tests before building APKs"
+        description: "Run unit tests"
         required: false
         type: boolean
         default: true
-      build_windows_receiver:
-        description: "Build Windows Wi-Fi Receiver (.exe installer & portable)"
+      build_release_apk:
+        description: "Build Release APK"
         required: false
         type: boolean
         default: true
+      build_debug_apk:
+        description: "Build Debug APK"
+        required: false
+        type: boolean
+        default: false
+      build_setup_exe:
+        description: "Build Windows Setup Installer (BTMouseReceiver-Setup.exe)"
+        required: false
+        type: boolean
+        default: true
+      build_portable_exe:
+        description: "Build Windows Portable Executable (BTMouseReceiver.exe)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  build-apk:
-    name: Build Android APKs
+  build-android:
+    name: Build Android & Run Tests
+    if: ${{ inputs.run_unit_tests || inputs.build_release_apk || inputs.build_debug_apk }}
     runs-on: ubuntu-latest
 
     steps:
@@ -52,9 +68,12 @@ jobs:
           if [ "$VERSION_CODE" -lt 1 ]; then
             VERSION_CODE="${{ github.run_number }}"
           fi
+          RECEIVER_URL="${{ github.server_url }}/${{ github.repository }}/releases/latest/download/BTMouseReceiver-Setup.exe"
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "WINDOWS_RECEIVER_URL=$RECEIVER_URL" >> "$GITHUB_ENV"
           echo "Resolved Android version: $VERSION_NAME (versionCode=$VERSION_CODE)"
+          echo "Resolved Receiver URL: $RECEIVER_URL"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -115,6 +134,7 @@ jobs:
           gradle-version: "9.3.1"
 
       - name: Prepare debug keystore
+        if: ${{ inputs.run_unit_tests || inputs.build_debug_apk }}
         shell: bash
         run: |
           set -euo pipefail
@@ -132,6 +152,7 @@ jobs:
           fi
 
       - name: Prepare release keystore
+        if: ${{ inputs.build_release_apk }}
         shell: bash
         run: |
           set -euo pipefail
@@ -148,7 +169,7 @@ jobs:
               -alias upload \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass android -keypass android \
-              -dname "CN=BT mouse, OU=Mobile, O=BTmouse, L=Naogaon, S=Rajshahi, C=BD"
+              -dname "CN=BT WiFi Mouse, OU=Mobile, O=SLM, L=Naogaon, S=Rajshahi, C=BD"
             echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
             echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
@@ -157,15 +178,18 @@ jobs:
 
       - name: Run unit tests
         if: ${{ inputs.run_unit_tests }}
-        run: gradle :app:testDebugUnitTest --no-daemon -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE"
+        run: gradle :app:testDebugUnitTest --no-daemon -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL"
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE"
+        if: ${{ inputs.build_debug_apk }}
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL"
 
       - name: Build Release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE"
+        if: ${{ inputs.build_release_apk }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL"
 
       - name: Upload Debug APK artifact
+        if: ${{ inputs.build_debug_apk }}
         uses: actions/upload-artifact@v6
         with:
           name: bt-mouse-debug-apk
@@ -173,6 +197,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Release APK artifact
+        if: ${{ inputs.build_release_apk }}
         uses: actions/upload-artifact@v6
         with:
           name: bt-mouse-release-apk
@@ -181,7 +206,7 @@ jobs:
 
   build-windows-exe:
     name: Build Windows Receiver (.exe)
-    if: ${{ inputs.build_windows_receiver }}
+    if: ${{ inputs.build_setup_exe || inputs.build_portable_exe }}
     runs-on: windows-latest
 
     steps:
@@ -207,6 +232,7 @@ jobs:
             -o windows-receiver/publish
 
       - name: Build BTMouseReceiver-Setup.exe with Inno Setup
+        if: ${{ inputs.build_setup_exe }}
         shell: pwsh
         run: |
           $rawVer = "${{ inputs.app_version }}".TrimStart('v')
@@ -223,6 +249,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows Setup Installer (.exe)
+        if: ${{ inputs.build_setup_exe }}
         uses: actions/upload-artifact@v6
         with:
           name: bt-mouse-windows-setup-exe
@@ -230,6 +257,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Windows Portable Executable (.exe)
+        if: ${{ inputs.build_portable_exe }}
         uses: actions/upload-artifact@v6
         with:
           name: bt-mouse-windows-portable-exe
@@ -238,35 +266,37 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: [build-apk, build-windows-exe]
-    if: ${{ always() && needs.build-apk.result == 'success' && (needs.build-windows-exe.result == 'success' || needs.build-windows-exe.result == 'skipped') }}
+    needs: [build-android, build-windows-exe]
+    if: ${{ always() && (inputs.build_release_apk || inputs.build_debug_apk || inputs.build_setup_exe || inputs.build_portable_exe) && (needs.build-android.result == 'success' || needs.build-android.result == 'skipped') && (needs.build-windows-exe.result == 'success' || needs.build-windows-exe.result == 'skipped') }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download Debug APK
-        uses: actions/download-artifact@v8
-        with:
-          name: bt-mouse-debug-apk
-          path: dist/apk-debug
-
       - name: Download Release APK
+        if: ${{ inputs.build_release_apk }}
         uses: actions/download-artifact@v8
         with:
           name: bt-mouse-release-apk
           path: dist/apk-release
 
+      - name: Download Debug APK
+        if: ${{ inputs.build_debug_apk }}
+        uses: actions/download-artifact@v8
+        with:
+          name: bt-mouse-debug-apk
+          path: dist/apk-debug
+
       - name: Download Windows Setup Installer
-        if: ${{ inputs.build_windows_receiver }}
+        if: ${{ inputs.build_setup_exe }}
         uses: actions/download-artifact@v8
         with:
           name: bt-mouse-windows-setup-exe
           path: dist/win-setup
 
       - name: Download Windows Portable EXE
-        if: ${{ inputs.build_windows_receiver }}
+        if: ${{ inputs.build_portable_exe }}
         uses: actions/download-artifact@v8
         with:
           name: bt-mouse-windows-portable-exe
@@ -286,22 +316,38 @@ jobs:
           TAG="v${VERSION_NAME}"
 
           mkdir -p release-assets
-          RELEASE_APK=$(find dist/apk-release -name "*.apk" | head -n 1)
-          DEBUG_APK=$(find dist/apk-debug -name "*.apk" | head -n 1)
-          cp "$RELEASE_APK" "release-assets/BT-mouse-v${VERSION_NAME}-release.apk"
-          cp "$DEBUG_APK" "release-assets/BT-mouse-v${VERSION_NAME}-debug.apk"
+
+          if [ -d dist/apk-release ]; then
+            RELEASE_APK=$(find dist/apk-release -name "*.apk" | head -n 1 || true)
+            if [ -n "$RELEASE_APK" ]; then
+              cp "$RELEASE_APK" "release-assets/BT-mouse-v${VERSION_NAME}-release.apk"
+            fi
+          fi
+
+          if [ -d dist/apk-debug ]; then
+            DEBUG_APK=$(find dist/apk-debug -name "*.apk" | head -n 1 || true)
+            if [ -n "$DEBUG_APK" ]; then
+              cp "$DEBUG_APK" "release-assets/BT-mouse-v${VERSION_NAME}-debug.apk"
+            fi
+          fi
 
           if [ -d dist/win-setup ] && [ -f dist/win-setup/BTMouseReceiver-Setup.exe ]; then
-            cp dist/win-setup/BTMouseReceiver-Setup.exe "release-assets/BTMouseReceiver-Setup-v${VERSION_NAME}.exe"
+            cp dist/win-setup/BTMouseReceiver-Setup.exe "release-assets/BTMouseReceiver-Setup.exe"
           fi
+
           if [ -d dist/win-portable ] && [ -f dist/win-portable/BTMouseReceiver.exe ]; then
             cp dist/win-portable/BTMouseReceiver.exe "release-assets/BTMouseReceiver-v${VERSION_NAME}.exe"
+          fi
+
+          if [ -z "$(ls -A release-assets)" ]; then
+            echo "No release assets selected."
+            exit 0
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
           else
             gh release create "$TAG" release-assets/* \
-              --title "BT mouse $TAG" \
-              --notes "BT mouse $TAG release (Android APKs + Windows Wi-Fi Receiver)"
+              --title "BT/WiFi Mouse With File Transfer $TAG" \
+              --notes "BT/WiFi Mouse With File Transfer $TAG release"
           fi

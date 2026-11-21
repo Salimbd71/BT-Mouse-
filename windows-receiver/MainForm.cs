@@ -13,6 +13,7 @@ internal sealed class MainForm : Form
     private const string AppRunValueName = "BTMouseReceiver";
 
     private readonly UdpServer _server = new();
+    private readonly FileTransferServer _fileServer = new();
     private readonly NotifyIcon _trayIcon;
     private readonly Icon _appIcon;
     private readonly EventWaitHandle _showWindowEvent;
@@ -23,6 +24,9 @@ internal sealed class MainForm : Form
     private readonly Label _ipValueLabel = new();
     private readonly Label _pcNameValueLabel = new();
     private readonly Label _packetCountLabel = new();
+    private readonly Label _transferStatusLabel = new();
+    private readonly Button _sendFilesButton = new();
+    private readonly Button _openFolderButton = new();
     private readonly CheckBox _startupCheckBox = new();
     private readonly Button _firewallButton = new();
     private readonly Button _refreshIpButton = new();
@@ -40,16 +44,22 @@ internal sealed class MainForm : Form
         Icon = _appIcon;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
+        AllowDrop = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 410);
+        ClientSize = new Size(460, 505);
         BackColor = Color.FromArgb(12, 21, 28);
         ForeColor = Color.FromArgb(236, 244, 250);
         Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
+
+        DragEnter += OnFormDragEnter;
+        DragDrop += OnFormDragDrop;
 
         BuildUi();
 
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Open BT mouse Receiver", null, (_, _) => RestoreWindow());
+        trayMenu.Items.Add("Send File(s) to Phone...", null, (_, _) => PickAndOfferFilesToPhone());
+        trayMenu.Items.Add("Open Received Files Folder", null, (_, _) => OpenReceiveFolder());
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Exit", null, (_, _) => ExitApplication());
 
@@ -65,6 +75,11 @@ internal sealed class MainForm : Form
         _server.StatusChanged += OnServerStatusChanged;
         _server.ServerError += OnServerError;
         _server.Start();
+
+        _fileServer.TransferProgress += OnFileTransferProgress;
+        _fileServer.OffersChanged += OnFileOffersChanged;
+        _fileServer.ServerError += OnServerError;
+        _fileServer.Start();
 
         RefreshNetworkInfo();
         _startupCheckBox.Checked = IsStartupEnabled();
@@ -194,33 +209,73 @@ internal sealed class MainForm : Form
         });
         Controls.Add(infoCard);
 
+        var fileCard = new Panel
+        {
+            Location = new Point(20, 316),
+            Size = new Size(420, 86),
+            BackColor = Color.FromArgb(18, 32, 43),
+        };
+
+        var fileHeader = new Label
+        {
+            Text = "Wi-Fi File Transfer (TCP 51922)  •  Drag & drop files anywhere",
+            Font = new Font("Segoe UI", 8.8f, FontStyle.Bold),
+            ForeColor = Color.FromArgb(0, 212, 255),
+            Location = new Point(14, 10),
+            AutoSize = true,
+        };
+
+        _transferStatusLabel.Text = "Ready • Saves phone files to Downloads\\BT mouse Files";
+        _transferStatusLabel.Font = new Font("Segoe UI", 8.5f);
+        _transferStatusLabel.ForeColor = Color.FromArgb(156, 180, 198);
+        _transferStatusLabel.Location = new Point(14, 30);
+        _transferStatusLabel.Size = new Size(392, 18);
+
+        _sendFilesButton.Text = "Send File to Phone";
+        StyleButton(_sendFilesButton, Color.FromArgb(0, 150, 199), Color.White);
+        _sendFilesButton.Location = new Point(14, 50);
+        _sendFilesButton.Size = new Size(192, 28);
+        _sendFilesButton.Click += (_, _) => PickAndOfferFilesToPhone();
+
+        _openFolderButton.Text = "Open Received Folder";
+        StyleButton(_openFolderButton, Color.FromArgb(29, 49, 64), Color.FromArgb(88, 232, 198));
+        _openFolderButton.Location = new Point(214, 50);
+        _openFolderButton.Size = new Size(192, 28);
+        _openFolderButton.Click += (_, _) => OpenReceiveFolder();
+
+        fileCard.Controls.AddRange(new Control[]
+        {
+            fileHeader, _transferStatusLabel, _sendFilesButton, _openFolderButton,
+        });
+        Controls.Add(fileCard);
+
         _startupCheckBox.Text = "Start minimized when Windows turns on";
         _startupCheckBox.ForeColor = Color.FromArgb(214, 229, 240);
-        _startupCheckBox.Location = new Point(22, 318);
+        _startupCheckBox.Location = new Point(22, 412);
         _startupCheckBox.AutoSize = true;
         Controls.Add(_startupCheckBox);
 
         _refreshIpButton.Text = "Refresh IP";
         StyleButton(_refreshIpButton, Color.FromArgb(29, 49, 64), Color.White);
-        _refreshIpButton.Location = new Point(20, 354);
+        _refreshIpButton.Location = new Point(20, 448);
         _refreshIpButton.Size = new Size(94, 36);
         _refreshIpButton.Click += (_, _) => RefreshNetworkInfo();
 
         _firewallButton.Text = "Allow Firewall";
         StyleButton(_firewallButton, Color.FromArgb(29, 49, 64), Color.FromArgb(88, 232, 198));
-        _firewallButton.Location = new Point(122, 354);
+        _firewallButton.Location = new Point(122, 448);
         _firewallButton.Size = new Size(110, 36);
         _firewallButton.Click += (_, _) => AddFirewallRulesElevated();
 
         _minimizeTrayButton.Text = "Hide to Tray";
         StyleButton(_minimizeTrayButton, Color.FromArgb(0, 150, 199), Color.White);
-        _minimizeTrayButton.Location = new Point(240, 354);
+        _minimizeTrayButton.Location = new Point(240, 448);
         _minimizeTrayButton.Size = new Size(110, 36);
         _minimizeTrayButton.Click += (_, _) => HideToTray();
 
         _exitButton.Text = "Exit";
         StyleButton(_exitButton, Color.FromArgb(95, 36, 44), Color.White);
-        _exitButton.Location = new Point(358, 354);
+        _exitButton.Location = new Point(358, 448);
         _exitButton.Size = new Size(82, 36);
         _exitButton.Click += (_, _) => ExitApplication();
 
@@ -298,13 +353,104 @@ internal sealed class MainForm : Form
         });
     }
 
+    private void PickAndOfferFilesToPhone()
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Select file(s) to send to Android Phone",
+            Multiselect = true,
+            Filter = "All Files (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(this) == DialogResult.OK && dlg.FileNames.Length > 0)
+        {
+            OfferFilesToPhone(dlg.FileNames);
+        }
+    }
+
+    private void OnFormDragEnter(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+        {
+            e.Effect = DragDropEffects.Copy;
+        }
+    }
+
+    private void OnFormDragDrop(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
+        {
+            OfferFilesToPhone(files);
+        }
+    }
+
+    private void OfferFilesToPhone(IEnumerable<string> paths)
+    {
+        int totalPending = _fileServer.AddOfferedFiles(paths);
+        _server.NotifyFileOffer(totalPending);
+        _transferStatusLabel.Text = totalPending > 0
+            ? $"Queued {totalPending} file(s) for phone • Open 'Files' on phone"
+            : "No valid files selected (folders not supported directly)";
+    }
+
+    private void OpenReceiveFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_fileServer.ReceiveDirectory);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = _fileServer.ReceiveDirectory,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not open folder: {ex.Message}", "BT mouse Receiver");
+        }
+    }
+
+    private void OnFileOffersChanged(object? sender, int remainingCount)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        BeginInvoke(() =>
+        {
+            if (remainingCount == 0)
+            {
+                _transferStatusLabel.Text = "Ready • Saves phone files to Downloads\\BT mouse Files";
+            }
+            else
+            {
+                _transferStatusLabel.Text = $"Queued {remainingCount} file(s) waiting for phone download";
+            }
+        });
+    }
+
+    private void OnFileTransferProgress(object? sender, FileTransferProgressEventArgs e)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        BeginInvoke(() =>
+        {
+            if (e.Cancelled)
+            {
+                _transferStatusLabel.Text = "Transfer cancelled • Ready";
+                return;
+            }
+            int pct = e.TotalBytes > 0 ? (int)((e.BytesTransferred * 100L) / e.TotalBytes) : 100;
+            _transferStatusLabel.Text = e.Completed
+                ? $"{e.Direction}: {e.FileName} (100%)"
+                : $"{e.Direction}: {e.FileName} ({pct}%)";
+        });
+    }
+
     private void AddFirewallRulesElevated()
     {
         try
         {
             string psArgs =
                 "netsh advfirewall firewall delete rule name=\"BT mouse Wi-Fi Receiver\" >nul 2>&1 & " +
-                "netsh advfirewall firewall add rule name=\"BT mouse Wi-Fi Receiver\" dir=in action=allow protocol=UDP localport=51920,51921";
+                "netsh advfirewall firewall add rule name=\"BT mouse Wi-Fi Receiver\" dir=in action=allow protocol=UDP localport=51920,51921 & " +
+                "netsh advfirewall firewall delete rule name=\"BT mouse Wi-Fi File Transfer\" >nul 2>&1 & " +
+                "netsh advfirewall firewall add rule name=\"BT mouse Wi-Fi File Transfer\" dir=in action=allow protocol=TCP localport=51922";
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
@@ -316,7 +462,7 @@ internal sealed class MainForm : Form
             Process.Start(psi);
             MessageBox.Show(
                 this,
-                "Windows Firewall allow rule added for UDP ports 51920 and 51921.",
+                "Windows Firewall allow rules added for UDP 51920-51921 and TCP 51922.",
                 "BT mouse Receiver",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -414,6 +560,7 @@ internal sealed class MainForm : Form
         if (disposing)
         {
             _server.Dispose();
+            _fileServer.Dispose();
             _trayIcon.Dispose();
             _appIcon.Dispose();
         }

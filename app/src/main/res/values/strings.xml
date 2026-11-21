@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">BT mouse</string>
+    <string name="app_name">BT/WiFi Mouse With File Transfer</string>
     <string name="status_connected">Connected</string>
     <string name="status_connecting">Connecting…</string>
     <string name="status_ready">HID Ready</string>

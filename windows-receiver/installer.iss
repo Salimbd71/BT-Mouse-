@@ -42,8 +42,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BT mouse Wi-Fi Receiver"""; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BT mouse Wi-Fi Receiver"" dir=in action=allow protocol=UDP localport=51920,51921"; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BT mouse Wi-Fi File Transfer"""; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BT mouse Wi-Fi File Transfer"" dir=in action=allow protocol=TCP localport=51922"; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "KillReceiver"
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BT mouse Wi-Fi Receiver"""; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewallRule"
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BT mouse Wi-Fi File Transfer"""; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewallFileRule"

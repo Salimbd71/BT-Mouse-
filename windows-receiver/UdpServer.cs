@@ -32,6 +32,7 @@ internal sealed class UdpServer : IDisposable
     private const byte PktKeyPress = 0x20;
     private const byte PktUnicodeText = 0x21;
     private const byte PktConsumerKey = 0x30;
+    private const byte PktFileOffer = 0x40;
 
     private readonly CancellationTokenSource _cts = new();
     private UdpClient? _controlClient;
@@ -41,6 +42,7 @@ internal sealed class UdpServer : IDisposable
     private readonly object _stateLock = new();
     private string? _connectedPhoneName;
     private string? _connectedPhoneIp;
+    private IPEndPoint? _connectedPhoneEndPoint;
     private DateTime _lastActivityUtc = DateTime.MinValue;
     private long _packetCount;
 
@@ -132,6 +134,7 @@ internal sealed class UdpServer : IDisposable
                 {
                     _lastActivityUtc = DateTime.UtcNow;
                     _connectedPhoneIp = senderIp;
+                    _connectedPhoneEndPoint = sender;
                     _packetCount++;
                 }
 
@@ -252,6 +255,7 @@ internal sealed class UdpServer : IDisposable
                     {
                         _connectedPhoneIp = null;
                         _connectedPhoneName = null;
+                        _connectedPhoneEndPoint = null;
                         expired = true;
                     }
                 }
@@ -308,6 +312,20 @@ internal sealed class UdpServer : IDisposable
             IsConnected = ip != null,
             PacketsReceived = count,
         });
+    }
+
+    public void NotifyFileOffer(int offerCount)
+    {
+        IPEndPoint? target;
+        lock (_stateLock)
+        {
+            target = _connectedPhoneEndPoint;
+        }
+        if (target == null || _controlClient == null) return;
+
+        byte countByte = (byte)Math.Clamp(offerCount, 0, 255);
+        byte[] pkt = { Magic0, Magic1, PktFileOffer, countByte };
+        _ = _controlClient.SendAsync(pkt, pkt.Length, target);
     }
 
     public void Dispose()

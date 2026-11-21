@@ -1,5 +1,5 @@
 {
-  "name": "BT mouse",
+  "name": "BT/WiFi Mouse With File Transfer",
   "description": "Low-latency Bluetooth HID wireless mouse, touchpad, scroll wheel, and keyboard controller for Smart TVs and Windows laptops with auto-pairing and dark mode.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

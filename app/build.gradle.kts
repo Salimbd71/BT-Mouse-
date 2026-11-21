@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.slm"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -18,6 +18,11 @@ android {
     targetSdk = 36
     versionCode = providers.gradleProperty("appVersionCode").orNull?.trim()?.toIntOrNull() ?: 1
     versionName = providers.gradleProperty("appVersionName").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: "1.0"
+
+    val receiverUrlProp = providers.gradleProperty("windowsReceiverUrl").orNull?.trim()
+      ?.takeIf { it.isNotEmpty() }
+      ?: "https://github.com/salim/bt-mouse/releases/latest/download/BTMouseReceiver-Setup.exe"
+    buildConfigField("String", "WINDOWS_RECEIVER_URL", "\"$receiverUrlProp\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
