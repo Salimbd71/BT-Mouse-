@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.SpaceBar
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -74,6 +75,7 @@ fun KeyboardDeckSection(
     onSendHidKey: (Int) -> Unit,
     onSendCombo: (Int, Int) -> Unit,
     onSendCharacter: (Char) -> Unit,
+    onStartVoiceTyping: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -118,6 +120,19 @@ fun KeyboardDeckSection(
                         ) {
                             Icon(Icons.Rounded.Clear, contentDescription = "Clear")
                         }
+                    }
+                    IconButton(
+                        onClick = {
+                            tapHaptic()
+                            onStartVoiceTyping()
+                        },
+                        modifier = Modifier.testTag("voice_type_keyboard_button"),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Mic,
+                            contentDescription = "Voice Type",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
                     IconButton(
                         onClick = {
@@ -190,6 +205,7 @@ fun KeyboardDeckSection(
                 onClick = { tapHaptic(); showFunctionRow = !showFunctionRow },
                 testTag = "toggle_fn_row",
             )
+            ShortcutChip("Voice") { tapHaptic(); onStartVoiceTyping() }
             ShortcutChip("Esc") { tapHaptic(); onSendHidKey(HidKeyMap.KEY_ESC) }
             ShortcutChip("Tab") { tapHaptic(); onSendHidKey(HidKeyMap.KEY_TAB) }
             ShortcutChip("Del") { tapHaptic(); onSendHidKey(HidKeyMap.KEY_DELETE) }

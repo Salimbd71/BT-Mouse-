@@ -24,6 +24,11 @@ android {
       ?: "https://github.com/salim/bt-mouse/releases/latest/download/BTMouseReceiver-Setup.exe"
     buildConfigField("String", "WINDOWS_RECEIVER_URL", "\"$receiverUrlProp\"")
 
+    val apkUrlProp = providers.gradleProperty("androidApkUrl").orNull?.trim()
+      ?.takeIf { it.isNotEmpty() }
+      ?: "https://github.com/salim/bt-mouse/releases/latest/download/BT-mouse-release.apk"
+    buildConfigField("String", "ANDROID_APK_URL", "\"$apkUrlProp\"")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -92,10 +97,10 @@ dependencies {
   // implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
-  // implementation(libs.androidx.camera.camera2)
-  // implementation(libs.androidx.camera.core)
-  // implementation(libs.androidx.camera.lifecycle)
-  // implementation(libs.androidx.camera.view)
+  implementation(libs.androidx.camera.camera2)
+  implementation(libs.androidx.camera.core)
+  implementation(libs.androidx.camera.lifecycle)
+  implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
@@ -126,6 +131,7 @@ dependencies {
   // implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.zxing.core)
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)

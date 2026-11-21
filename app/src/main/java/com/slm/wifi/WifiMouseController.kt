@@ -400,6 +400,7 @@ class WifiMouseController(
     fun notifyMotionEnqueued() {
         if (motionLoopJob?.isActive == true) return
         motionLoopJob = scope.launch(Dispatchers.Default) {
+            var nextDeadlineNs = System.nanoTime()
             while (isActive && motionEngine.hasPendingMotion()) {
                 val packet = motionEngine.drainNextPacket()
                 if (packet != null) {
@@ -411,8 +412,14 @@ class WifiMouseController(
                     )
                     sendRawImmediate(bytes)
                 }
-                val intervalMs = (1000L / activePollingHz.coerceIn(30, 250)).coerceAtLeast(4L)
-                delay(intervalMs)
+                val intervalNs = (1_000_000_000L / activePollingHz.coerceIn(30, 250)).coerceAtLeast(4_000_000L)
+                nextDeadlineNs += intervalNs
+                val waitMs = (nextDeadlineNs - System.nanoTime()) / 1_000_000L
+                if (waitMs > 0L) {
+                    delay(waitMs)
+                } else {
+                    nextDeadlineNs = System.nanoTime()
+                }
             }
         }
     }

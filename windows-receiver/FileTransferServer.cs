@@ -31,6 +31,9 @@ internal sealed class FileTransferServer : IDisposable
     private const byte OpListOffers = 0x02;
     private const byte OpDownloadFromPc = 0x03;
     private const byte OpClearOffer = 0x04;
+    private const byte OpGetClipboard = 0x05;
+    private const byte OpSetClipboard = 0x06;
+    private const byte OpSystemAction = 0x07;
 
     private const byte StatusAck = 0x06;
     private const byte StatusErr = 0x15;
@@ -40,6 +43,10 @@ internal sealed class FileTransferServer : IDisposable
     private readonly ConcurrentDictionary<string, OfferedFile> _offeredFiles = new();
 
     public string ReceiveDirectory { get; }
+
+    public Func<Task<string>>? GetClipboardTextAsync { get; set; }
+    public Func<string, Task>? SetClipboardTextAsync { get; set; }
+    public Func<byte, Task<bool>>? ExecuteSystemActionAsync { get; set; }
 
     public event EventHandler<FileTransferProgressEventArgs>? TransferProgress;
     public event EventHandler<int>? OffersChanged;
@@ -153,6 +160,15 @@ internal sealed class FileTransferServer : IDisposable
                 case OpClearOffer:
                     await HandleClearOfferAsync(stream, ct);
                     break;
+                case OpGetClipboard:
+                    await HandleGetClipboardAsync(stream, ct);
+                    break;
+                case OpSetClipboard:
+                    await HandleSetClipboardAsync(stream, ct);
+                    break;
+                case OpSystemAction:
+                    await HandleSystemActionAsync(stream, ct);
+                    break;
             }
         }
     }
@@ -192,6 +208,16 @@ internal sealed class FileTransferServer : IDisposable
             byte[] buffer = new byte[65536];
             long received = 0;
             long lastNotify = 0;
+            string displayFileName = Path.GetFileName(finalPath);
+
+            TransferProgress?.Invoke(this, new FileTransferProgressEventArgs
+            {
+                Direction = "Received from Phone",
+                FileName = displayFileName,
+                BytesTransferred = 0,
+                TotalBytes = fileSize,
+                Completed = false,
+            });
 
             await using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536, useAsync: true))
             {
@@ -206,13 +232,13 @@ internal sealed class FileTransferServer : IDisposable
                     await fs.WriteAsync(buffer.AsMemory(0, n), ct);
                     received += n;
 
-                    if (received - lastNotify >= 131072 || received == fileSize)
+                    if (received - lastNotify >= 65536 || received == fileSize)
                     {
                         lastNotify = received;
                         TransferProgress?.Invoke(this, new FileTransferProgressEventArgs
                         {
                             Direction = "Received from Phone",
-                            FileName = Path.GetFileName(finalPath),
+                            FileName = displayFileName,
                             BytesTransferred = received,
                             TotalBytes = fileSize,
                             Completed = false,
@@ -333,13 +359,22 @@ internal sealed class FileTransferServer : IDisposable
         long sent = 0;
         long lastNotify = 0;
 
+        TransferProgress?.Invoke(this, new FileTransferProgressEventArgs
+        {
+            Direction = "Sent to Phone",
+            FileName = offer.FileName,
+            BytesTransferred = 0,
+            TotalBytes = size,
+            Completed = size == 0,
+        });
+
         await using var fs = new FileStream(offer.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, useAsync: true);
         int read;
         while ((read = await fs.ReadAsync(buffer, ct)) > 0)
         {
             await stream.WriteAsync(buffer.AsMemory(0, read), ct);
             sent += read;
-            if (sent - lastNotify >= 131072 || sent == size)
+            if (sent - lastNotify >= 65536 || sent == size)
             {
                 lastNotify = sent;
                 TransferProgress?.Invoke(this, new FileTransferProgressEventArgs
@@ -371,6 +406,78 @@ internal sealed class FileTransferServer : IDisposable
 
         await stream.WriteAsync(new[] { StatusAck }, ct);
         await stream.FlushAsync(ct);
+    }
+
+    private async Task HandleGetClipboardAsync(NetworkStream stream, CancellationToken ct)
+    {
+        try
+        {
+            string text = GetClipboardTextAsync != null
+                ? await GetClipboardTextAsync()
+                : string.Empty;
+            byte[] utf8 = Encoding.UTF8.GetBytes(text);
+            byte[] packet = new byte[1 + 4 + utf8.Length];
+            packet[0] = StatusAck;
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(1, 4), utf8.Length);
+            Buffer.BlockCopy(utf8, 0, packet, 5, utf8.Length);
+            await stream.WriteAsync(packet, ct);
+            await stream.FlushAsync(ct);
+        }
+        catch
+        {
+            try { await stream.WriteAsync(new[] { StatusErr }, ct); } catch { }
+        }
+    }
+
+    private async Task HandleSetClipboardAsync(NetworkStream stream, CancellationToken ct)
+    {
+        try
+        {
+            byte[] lenBuf = new byte[4];
+            if (!await ReadExactAsync(stream, lenBuf, 4, ct)) return;
+            int len = BinaryPrimitives.ReadInt32BigEndian(lenBuf);
+            if (len < 0 || len > 1_048_576)
+            {
+                await stream.WriteAsync(new[] { StatusErr }, ct);
+                return;
+            }
+
+            string text = string.Empty;
+            if (len > 0)
+            {
+                byte[] textBytes = new byte[len];
+                if (!await ReadExactAsync(stream, textBytes, len, ct)) return;
+                text = Encoding.UTF8.GetString(textBytes);
+            }
+
+            if (SetClipboardTextAsync != null)
+            {
+                await SetClipboardTextAsync(text);
+            }
+
+            await stream.WriteAsync(new[] { StatusAck }, ct);
+            await stream.FlushAsync(ct);
+        }
+        catch
+        {
+            try { await stream.WriteAsync(new[] { StatusErr }, ct); } catch { }
+        }
+    }
+
+    private async Task HandleSystemActionAsync(NetworkStream stream, CancellationToken ct)
+    {
+        try
+        {
+            byte[] actionBuf = new byte[1];
+            if (!await ReadExactAsync(stream, actionBuf, 1, ct)) return;
+            bool ok = ExecuteSystemActionAsync != null && await ExecuteSystemActionAsync(actionBuf[0]);
+            await stream.WriteAsync(new[] { ok ? StatusAck : StatusErr }, ct);
+            await stream.FlushAsync(ct);
+        }
+        catch
+        {
+            try { await stream.WriteAsync(new[] { StatusErr }, ct); } catch { }
+        }
     }
 
     private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int count, CancellationToken ct)

@@ -1,8 +1,11 @@
 package com.slm.ui
 
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.provider.Settings
+import android.speech.RecognizerIntent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -43,6 +46,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BrightnessAuto
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
@@ -50,8 +54,10 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.LaptopWindows
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Mouse
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.SettingsRemote
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Tune
@@ -92,7 +98,9 @@ import com.slm.data.TransportMode
 import com.slm.ui.components.DevicesBottomSheet
 import com.slm.ui.components.FileTransferBottomSheet
 import com.slm.ui.components.KeyboardDeckSection
+import com.slm.ui.components.PcToolsBottomSheet
 import com.slm.ui.components.PrecisionTouchpadSection
+import com.slm.ui.components.QrScannerDialog
 import com.slm.ui.components.SettingsBottomSheet
 import com.slm.ui.components.TvRemoteDeckSection
 import com.slm.ui.theme.ConnectedEmerald
@@ -151,6 +159,30 @@ fun BtMouseScreen(
         }
         runCatching {
             discoverableLauncher.launch(intent)
+        }
+    }
+
+    val voiceInputLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = matches?.firstOrNull()?.trim().orEmpty()
+            if (spoken.isNotEmpty()) {
+                viewModel.sendVoiceText(spoken)
+            }
+        }
+    }
+
+    fun launchVoiceTyping() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to type on PC or TV")
+        }
+        runCatching {
+            voiceInputLauncher.launch(intent)
+        }.onFailure {
+            Toast.makeText(context, "Voice typing service unavailable on this device", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -228,6 +260,7 @@ fun BtMouseScreen(
                         onEnableBluetooth = ::launchEnableBluetooth,
                         onAutoPair = ::launchDiscoverable,
                         onScanWifi = viewModel::scanWifiHosts,
+                        onScanQr = { viewModel.setQrScannerVisible(true) },
                         onOpenDevices = { viewModel.setDevicesSheetVisible(true) },
                     )
                 }
@@ -239,6 +272,8 @@ fun BtMouseScreen(
                     isFileTransferActive = uiState.fileTransferState.isBusy,
                     onToggleTypeBar = viewModel::toggleLiveTypeBar,
                     onOpenFiles = { viewModel.setFileTransferSheetVisible(true) },
+                    onOpenPcTools = { viewModel.setPcToolsSheetVisible(true) },
+                    onVoiceType = ::launchVoiceTyping,
                     onHome = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_AC_HOME) },
                     onBack = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_AC_BACK) },
                     onPlayPause = { viewModel.sendConsumerKey(HidKeyMap.CONSUMER_PLAY_PAUSE) },
@@ -344,6 +379,16 @@ fun BtMouseScreen(
                                     }
                                 }
                                 IconButton(
+                                    onClick = ::launchVoiceTyping,
+                                    modifier = Modifier.testTag("quick_voice_type_button"),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Mic,
+                                        contentDescription = "Voice Type",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                IconButton(
                                     onClick = {
                                         viewModel.sendHidKey(HidKeyMap.KEY_ENTER)
                                         viewModel.clearLiveTypeBuffer()
@@ -370,6 +415,8 @@ fun BtMouseScreen(
                     ) {
                         PrecisionTouchpadSection(
                             hapticEnabled = uiState.settings.hapticFeedback,
+                            buttonsPosition = uiState.settings.mouseButtonsPosition,
+                            leftHandedMode = uiState.settings.leftHandedMode,
                             isLeftPressed = uiState.isLeftPressed,
                             isMiddlePressed = uiState.isMiddlePressed,
                             isRightPressed = uiState.isRightPressed,
@@ -423,6 +470,7 @@ fun BtMouseScreen(
                                     onSendHidKey = { viewModel.sendHidKey(it) },
                                     onSendCombo = viewModel::sendCombo,
                                     onSendCharacter = viewModel::sendCharacterKey,
+                                    onStartVoiceTyping = ::launchVoiceTyping,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -444,6 +492,8 @@ fun BtMouseScreen(
                             ControllerTab.TOUCHPAD -> {
                                 PrecisionTouchpadSection(
                                     hapticEnabled = uiState.settings.hapticFeedback,
+                                    buttonsPosition = uiState.settings.mouseButtonsPosition,
+                                    leftHandedMode = uiState.settings.leftHandedMode,
                                     isLeftPressed = uiState.isLeftPressed,
                                     isMiddlePressed = uiState.isMiddlePressed,
                                     isRightPressed = uiState.isRightPressed,
@@ -471,6 +521,7 @@ fun BtMouseScreen(
                                     onSendHidKey = { viewModel.sendHidKey(it) },
                                     onSendCombo = viewModel::sendCombo,
                                     onSendCharacter = viewModel::sendCharacterKey,
+                                    onStartVoiceTyping = ::launchVoiceTyping,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -512,6 +563,7 @@ fun BtMouseScreen(
             onConnectDevice = viewModel::connectToHost,
             onDisconnectDevice = viewModel::disconnectHost,
             onScanWifi = viewModel::scanWifiHosts,
+            onOpenQrScanner = { viewModel.setQrScannerVisible(true) },
             onConnectWifi = viewModel::connectWifiIp,
             onDisconnectWifi = viewModel::disconnectWifi,
             onAutoConnectChanged = viewModel::setAutoConnect,
@@ -523,6 +575,8 @@ fun BtMouseScreen(
             settings = uiState.settings,
             onDismiss = { viewModel.setSettingsSheetVisible(false) },
             onThemeModeChanged = viewModel::setThemeMode,
+            onMouseButtonsPositionChanged = viewModel::setMouseButtonsPosition,
+            onLeftHandedChanged = viewModel::setLeftHandedMode,
             onPointerSensitivityChanged = viewModel::setPointerSensitivity,
             onScrollSensitivityChanged = viewModel::setScrollSensitivity,
             onAccelerationChanged = viewModel::setPointerAcceleration,
@@ -548,6 +602,33 @@ fun BtMouseScreen(
             onDownloadAllOffers = viewModel::downloadAllPcFiles,
             onCancelTransfer = viewModel::cancelFileTransfer,
             onDismissError = viewModel::clearFileTransferError,
+        )
+    }
+
+    if (uiState.showPcToolsSheet) {
+        PcToolsBottomSheet(
+            wifiConnectionState = uiState.wifiConnectionState,
+            lastSyncedClipboard = uiState.lastSyncedClipboard,
+            statusMessage = uiState.pcToolsStatus,
+            isBusy = uiState.pcToolsBusy,
+            onDismiss = { viewModel.setPcToolsSheetVisible(false) },
+            onConnectWifiPc = {
+                viewModel.setPcToolsSheetVisible(false)
+                viewModel.selectTransportMode(TransportMode.WIFI)
+                viewModel.setDevicesSheetVisible(true)
+            },
+            onSendPhoneClipboard = viewModel::sendPhoneClipboardToPc,
+            onPasteOnPc = viewModel::pasteClipboardOnActiveHost,
+            onFetchPcClipboard = viewModel::fetchPcClipboardToPhone,
+            onExecuteSystemAction = viewModel::executePcSystemAction,
+            onClearStatus = viewModel::clearPcToolsStatus,
+        )
+    }
+
+    if (uiState.showQrScannerDialog) {
+        QrScannerDialog(
+            onDismiss = { viewModel.setQrScannerVisible(false) },
+            onQrCodeScanned = viewModel::connectFromQrCode,
         )
     }
 }
@@ -814,6 +895,7 @@ private fun QuickConnectionBanner(
     onEnableBluetooth: () -> Unit,
     onAutoPair: () -> Unit,
     onScanWifi: () -> Unit,
+    onScanQr: () -> Unit,
     onOpenDevices: () -> Unit,
 ) {
     val isError = if (transportMode == TransportMode.WIFI) {
@@ -840,7 +922,7 @@ private fun QuickConnectionBanner(
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (transportMode == TransportMode.WIFI) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -850,9 +932,9 @@ private fun QuickConnectionBanner(
                         is WifiConnectionState.Connecting ->
                             "Connecting to ${wifiConnectionState.hostName}" to wifiConnectionState.ipAddress
                         is WifiConnectionState.Error ->
-                            "PC Not Reached" to "Run BTMouseReceiver.exe & tap Connect"
+                            "PC Not Reached" to "Scan QR or tap Connect"
                         else ->
-                            "PC Wi-Fi Mode" to if (wifiHostCount > 0) "$wifiHostCount PC(s) found — tap Connect" else "Run BTMouseReceiver.exe on your laptop"
+                            "PC Wi-Fi Mode" to if (wifiHostCount > 0) "$wifiHostCount PC(s) found — tap Connect" else "Scan QR on BTMouseReceiver.exe"
                     }
                     Text(headline, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text(
@@ -864,15 +946,25 @@ private fun QuickConnectionBanner(
                     )
                 }
                 FilledTonalButton(
+                    onClick = onScanQr,
+                    modifier = Modifier.height(40.dp).testTag("banner_scan_qr_btn"),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("QR")
+                }
+                FilledTonalButton(
                     onClick = onScanWifi,
                     modifier = Modifier.height(40.dp).testTag("banner_scan_wifi_btn"),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
                     shape = RoundedCornerShape(12.dp),
                 ) { Text("Scan") }
                 Button(
                     onClick = onOpenDevices,
                     modifier = Modifier.height(40.dp).testTag("banner_connect_wifi_btn"),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
                     shape = RoundedCornerShape(12.dp),
                 ) { Text("Connect") }
             } else {
@@ -948,6 +1040,8 @@ private fun QuickShortcutsStrip(
     isFileTransferActive: Boolean,
     onToggleTypeBar: () -> Unit,
     onOpenFiles: () -> Unit,
+    onOpenPcTools: () -> Unit,
+    onVoiceType: () -> Unit,
     onHome: () -> Unit,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
@@ -973,6 +1067,18 @@ private fun QuickShortcutsStrip(
             active = incomingFileCount > 0 || isFileTransferActive,
             onClick = onOpenFiles,
             testTag = "quick_chip_files",
+        )
+        QuickChip(
+            label = "Tools",
+            icon = Icons.Rounded.Build,
+            onClick = onOpenPcTools,
+            testTag = "quick_chip_pc_tools",
+        )
+        QuickChip(
+            label = "Voice",
+            icon = Icons.Rounded.Mic,
+            onClick = onVoiceType,
+            testTag = "quick_chip_voice",
         )
         QuickChip(
             label = "Type",

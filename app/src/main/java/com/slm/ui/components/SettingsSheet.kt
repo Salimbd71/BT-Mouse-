@@ -5,23 +5,19 @@ import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Call
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -50,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.slm.BuildConfig
 import com.slm.data.AppSettings
+import com.slm.data.MouseButtonsPosition
 import com.slm.data.ThemeMode
 import kotlin.math.roundToInt
 
@@ -59,6 +56,8 @@ fun SettingsBottomSheet(
     settings: AppSettings,
     onDismiss: () -> Unit,
     onThemeModeChanged: (ThemeMode) -> Unit,
+    onMouseButtonsPositionChanged: (MouseButtonsPosition) -> Unit,
+    onLeftHandedChanged: (Boolean) -> Unit,
     onPointerSensitivityChanged: (Float) -> Unit,
     onScrollSensitivityChanged: (Float) -> Unit,
     onAccelerationChanged: (Boolean) -> Unit,
@@ -122,6 +121,42 @@ fun SettingsBottomSheet(
                 }
             }
 
+            // Mouse Buttons Position Selector (Above / Below Touchpad)
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Mouse Buttons Position", style = MaterialTheme.typography.titleSmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = settings.mouseButtonsPosition == MouseButtonsPosition.TOP,
+                            onClick = { onMouseButtonsPositionChanged(MouseButtonsPosition.TOP) },
+                            label = { Text("Above Touchpad") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("mouse_buttons_pos_top"),
+                        )
+                        FilterChip(
+                            selected = settings.mouseButtonsPosition == MouseButtonsPosition.BOTTOM,
+                            onClick = { onMouseButtonsPositionChanged(MouseButtonsPosition.BOTTOM) },
+                            label = { Text("Below Touchpad") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("mouse_buttons_pos_bottom"),
+                        )
+                    }
+                }
+            }
+
             // Optimized Data Transmission Protocol Rate
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -134,11 +169,6 @@ fun SettingsBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("HID Packet Polling Rate", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = "Higher Hz coalesces sub-pixel frames faster for lag-free 4K TV & laptop control.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -208,22 +238,25 @@ fun SettingsBottomSheet(
 
             // Toggles
             SettingsSwitchRow(
+                title = "Left-Handed Mode",
+                checked = settings.leftHandedMode,
+                onCheckedChange = onLeftHandedChanged,
+                testTag = "left_handed_switch",
+            )
+            SettingsSwitchRow(
                 title = "Pointer Acceleration",
-                subtitle = "Boost cursor travel speed on fast swipes",
                 checked = settings.pointerAcceleration,
                 onCheckedChange = onAccelerationChanged,
                 testTag = "acceleration_switch",
             )
             SettingsSwitchRow(
                 title = "Natural Scrolling",
-                subtitle = "Content follows finger direction",
                 checked = settings.naturalScroll,
                 onCheckedChange = onNaturalScrollChanged,
                 testTag = "natural_scroll_switch",
             )
             SettingsSwitchRow(
                 title = "Haptic Feedback",
-                subtitle = "Tactile pulse on clicks, wheel notches & keys",
                 checked = settings.hapticFeedback,
                 onCheckedChange = onHapticChanged,
                 testTag = "haptic_switch",
@@ -240,6 +273,34 @@ private fun AboutDeveloperCard() {
     val phoneNumber = "01737462871"
     val whatsappUri = "https://wa.me/8801737462871"
     val facebookUri = "https://fb.com/salim.naogaon"
+
+    val shareLatestLinks = {
+        val shareText = buildString {
+            appendLine("BT/WiFi Mouse With File Transfer (v${BuildConfig.VERSION_NAME})")
+            appendLine("Wireless PC touchpad, keyboard, Smart TV remote & background Wi-Fi file transfer.")
+            appendLine()
+            appendLine("Android Release APK:")
+            appendLine(BuildConfig.ANDROID_APK_URL)
+            appendLine()
+            appendLine("Windows PC Setup (.exe):")
+            appendLine(BuildConfig.WINDOWS_RECEIVER_URL)
+            appendLine()
+            appendLine("Quick Instructions:")
+            appendLine("1. Install the APK on your phone and run BTMouseReceiver-Setup.exe on your Windows PC.")
+            appendLine("2. Keep both devices on the same Wi-Fi network (or pair via Bluetooth).")
+            appendLine("3. Open both apps to control mouse/keyboard & transfer files in background.")
+            appendLine()
+            append("Developed By Salim")
+        }
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "BT/WiFi Mouse With File Transfer (APK + Windows EXE)")
+            putExtra(Intent.EXTRA_TEXT, shareText)
+        }
+        runCatching {
+            context.startActivity(Intent.createChooser(shareIntent, "Share App & PC Receiver Links"))
+        }
+    }
 
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -288,7 +349,7 @@ private fun AboutDeveloperCard() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "Salim",
+                    text = "Developed By Salim",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.testTag("about_developer_text"),
@@ -299,49 +360,47 @@ private fun AboutDeveloperCard() {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                FilledTonalButton(
+                FilledTonalIconButton(
                     onClick = {
                         runCatching {
                             context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phoneNumber")))
                         }
                     },
                     modifier = Modifier
-                        .weight(1f)
+                        .size(48.dp)
                         .testTag("about_call_button"),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ),
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Call,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        contentDescription = "Call $phoneNumber",
+                        modifier = Modifier.size(22.dp),
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Call me", maxLines = 1)
                 }
 
-                FilledTonalButton(
+                FilledTonalIconButton(
                     onClick = {
                         runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(whatsappUri)))
                         }
                     },
                     modifier = Modifier
-                        .weight(1f)
+                        .size(48.dp)
                         .testTag("about_whatsapp_button"),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
                         containerColor = Color(0xFF1B4332).copy(alpha = 0.22f),
                         contentColor = Color(0xFF25D366),
                     ),
                 ) {
-                    WhatsAppGlyph(modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("WhatsApp", maxLines = 1)
+                    WhatsAppGlyph(modifier = Modifier.size(22.dp))
                 }
 
                 FilledTonalIconButton(
@@ -360,6 +419,24 @@ private fun AboutDeveloperCard() {
                     ),
                 ) {
                     FacebookGlyph(modifier = Modifier.size(22.dp))
+                }
+
+                FilledTonalIconButton(
+                    onClick = { shareLatestLinks() },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("about_share_links_button"),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Share,
+                        contentDescription = "Share APK and Windows EXE download links",
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
             }
         }
@@ -440,7 +517,6 @@ private fun FacebookGlyph(modifier: Modifier = Modifier) {
 @Composable
 private fun SettingsSwitchRow(
     title: String,
-    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     testTag: String,
@@ -456,14 +532,11 @@ private fun SettingsSwitchRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f),
+            )
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,

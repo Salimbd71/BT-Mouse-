@@ -30,11 +30,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +57,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.slm.R
+import com.slm.data.MouseButtonsPosition
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -62,6 +67,8 @@ import kotlin.math.hypot
 @Composable
 fun PrecisionTouchpadSection(
     hapticEnabled: Boolean,
+    buttonsPosition: MouseButtonsPosition = MouseButtonsPosition.BOTTOM,
+    leftHandedMode: Boolean = false,
     isLeftPressed: Boolean,
     isMiddlePressed: Boolean,
     isRightPressed: Boolean,
@@ -85,7 +92,24 @@ fun PrecisionTouchpadSection(
     var activeFingerCount by remember { mutableStateOf(0) }
     var isTapDragHolding by remember { mutableStateOf(false) }
     var lastSingleTapTime by remember { mutableStateOf(0L) }
+    var pendingSingleTapJob by remember { mutableStateOf<Job?>(null) }
     var wheelPhaseOffset by remember { mutableFloatStateOf(0f) }
+
+    val currentOnLeftClick by rememberUpdatedState(onLeftClick)
+    val currentOnRightClick by rememberUpdatedState(onRightClick)
+    val currentOnLeftHoldChanged by rememberUpdatedState(onLeftHoldChanged)
+    val currentOnMove by rememberUpdatedState(onMove)
+    val currentOnTwoFingerScroll by rememberUpdatedState(onTwoFingerScroll)
+    val currentOnPinchZoom by rememberUpdatedState(onPinchZoom)
+
+    DisposableEffect(Unit) {
+        onDispose {
+            pendingSingleTapJob?.cancel()
+            if (isTapDragHolding) {
+                currentOnLeftHoldChanged(false)
+            }
+        }
+    }
 
     val rippleProgress = remember { Animatable(1f) }
     var rippleOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -108,10 +132,78 @@ fun PrecisionTouchpadSection(
         }
     }
 
+    val mouseButtonsDeck: @Composable () -> Unit = {
+        val leftSlotIsRightClick = leftHandedMode
+        val firstLabel = stringResource(if (leftSlotIsRightClick) R.string.btn_right_click else R.string.btn_left_click)
+        val firstSub = if (leftSlotIsRightClick) "MENU" else "HOLD / DRAG"
+        val firstPressed = if (leftSlotIsRightClick) isRightPressed else isLeftPressed
+        val firstHandler: (Boolean) -> Unit = { pressed ->
+            if (pressed) triggerClickHaptic(strong = leftSlotIsRightClick)
+            if (leftSlotIsRightClick) onRightHoldChanged(pressed) else onLeftHoldChanged(pressed)
+        }
+        val firstTag = if (leftSlotIsRightClick) "right_mouse_button" else "left_mouse_button"
+
+        val secondLabel = stringResource(if (leftSlotIsRightClick) R.string.btn_left_click else R.string.btn_right_click)
+        val secondSub = if (leftSlotIsRightClick) "HOLD / DRAG" else "MENU"
+        val secondPressed = if (leftSlotIsRightClick) isLeftPressed else isRightPressed
+        val secondHandler: (Boolean) -> Unit = { pressed ->
+            if (pressed) triggerClickHaptic(strong = !leftSlotIsRightClick)
+            if (leftSlotIsRightClick) onLeftHoldChanged(pressed) else onRightHoldChanged(pressed)
+        }
+        val secondTag = if (leftSlotIsRightClick) "left_mouse_button" else "right_mouse_button"
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            MouseHardwareButton(
+                label = firstLabel,
+                subLabel = firstSub,
+                isPressed = firstPressed,
+                onPressChanged = firstHandler,
+                modifier = Modifier
+                    .weight(1.35f)
+                    .fillMaxHeight()
+                    .testTag(firstTag),
+            )
+
+            MouseHardwareButton(
+                label = stringResource(R.string.btn_middle_click),
+                subLabel = "WHEEL",
+                isPressed = isMiddlePressed,
+                onPressChanged = { pressed ->
+                    if (pressed) triggerClickHaptic()
+                    onMiddleHoldChanged(pressed)
+                },
+                modifier = Modifier
+                    .weight(0.7f)
+                    .fillMaxHeight()
+                    .testTag("middle_mouse_button"),
+            )
+
+            MouseHardwareButton(
+                label = secondLabel,
+                subLabel = secondSub,
+                isPressed = secondPressed,
+                onPressChanged = secondHandler,
+                modifier = Modifier
+                    .weight(1.35f)
+                    .fillMaxHeight()
+                    .testTag(secondTag),
+            )
+        }
+    }
+
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        if (buttonsPosition == MouseButtonsPosition.TOP) {
+            mouseButtonsDeck()
+        }
+
         // Touchpad + Tactile Scroll Wheel Row
         Row(
             modifier = Modifier
@@ -119,6 +211,19 @@ fun PrecisionTouchpadSection(
                 .weight(1f),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (leftHandedMode) {
+                ScrollWheelStrip(
+                    hapticEnabled = hapticEnabled,
+                    phaseOffset = wheelPhaseOffset,
+                    onScrollDelta = { dy ->
+                        wheelPhaseOffset = (wheelPhaseOffset + dy) % 28f
+                        onWheelStripScroll(dy)
+                    },
+                    modifier = Modifier
+                        .width(54.dp)
+                        .fillMaxHeight(),
+                )
+            }
             // Main Precision Touchpad Surface
             val surfaceColor = MaterialTheme.colorScheme.surface
             val surfaceElevated = MaterialTheme.colorScheme.surfaceVariant
@@ -156,16 +261,42 @@ fun PrecisionTouchpadSection(
                             val downTime = System.currentTimeMillis()
                             var maxPointers = 1
                             var totalTravel = 0f
+                            var hasCrossedMoveSlop = false
                             var prevCentroid = firstDown.position
                             var prevSpread = 0f
-                            var tapDragStarted = false
+                            var smoothCarryX = 0f
+                            var smoothCarryY = 0f
 
-                            // Check for double-tap-and-drag gesture
-                            if (downTime - lastSingleTapTime <= 260L) {
-                                tapDragStarted = true
-                                isTapDragHolding = true
-                                onLeftHoldChanged(true)
-                                triggerClickHaptic(strong = true)
+                            // Smart laptop-style tap-drag state:
+                            // Cancel pending single tap click if 2nd finger lands quickly so Windows does not
+                            // interpret Tap-1 + Down-2 as WM_NCLBUTTONDBLCLK (maximize) on title bars.
+                            val pendingWasWaiting = pendingSingleTapJob?.isActive == true
+                            val withinDoubleTapWindow = (downTime - lastSingleTapTime) <= 290L
+                            val isTapDragCandidate = pendingWasWaiting || withinDoubleTapWindow
+                            if (isTapDragCandidate) {
+                                pendingSingleTapJob?.cancel()
+                                pendingSingleTapJob = null
+                            }
+
+                            var tapDragEngaged = false
+                            var holdTimerJob: Job? = null
+
+                            fun engageTapDrag() {
+                                if (!tapDragEngaged) {
+                                    tapDragEngaged = true
+                                    isTapDragHolding = true
+                                    currentOnLeftHoldChanged(true)
+                                    triggerClickHaptic(strong = true)
+                                }
+                            }
+
+                            if (isTapDragCandidate) {
+                                holdTimerJob = scope.launch {
+                                    delay(165L)
+                                    if (!tapDragEngaged && activeFingerCount == 1) {
+                                        engageTapDrag()
+                                    }
+                                }
                             }
 
                             activeTouchPoint = firstDown.position
@@ -182,7 +313,7 @@ fun PrecisionTouchpadSection(
 
                                 if (pressedPointers.size > maxPointers) {
                                     maxPointers = pressedPointers.size
-                                    // Reset centroid baseline when second finger lands
+                                    holdTimerJob?.cancel()
                                     prevCentroid = pressedPointers
                                         .fold(Offset.Zero) { acc, c -> acc + c.position } /
                                         pressedPointers.size.toFloat()
@@ -191,10 +322,10 @@ fun PrecisionTouchpadSection(
                                             pressedPointers[0].position.x - pressedPointers[1].position.x,
                                             pressedPointers[0].position.y - pressedPointers[1].position.y,
                                         )
-                                        if (tapDragStarted) {
-                                            tapDragStarted = false
+                                        if (tapDragEngaged) {
+                                            tapDragEngaged = false
                                             isTapDragHolding = false
-                                            onLeftHoldChanged(false)
+                                            currentOnLeftHoldChanged(false)
                                         }
                                     }
                                     pressedPointers.forEach { it.consume() }
@@ -208,12 +339,31 @@ fun PrecisionTouchpadSection(
 
                                 val dx = centroid.x - prevCentroid.x
                                 val dy = centroid.y - prevCentroid.y
-                                totalTravel += hypot(dx, dy)
+                                val stepDist = hypot(dx, dy)
+                                totalTravel += stepDist
 
                                 if (pressedPointers.size == 1) {
                                     if (pressedPointers[0].positionChanged()) {
-                                        if (totalTravel > touchSlop * 0.45f || tapDragStarted) {
-                                            onMove(dx, dy)
+                                        if (!hasCrossedMoveSlop && totalTravel > touchSlop * 0.38f) {
+                                            hasCrossedMoveSlop = true
+                                            smoothCarryX = 0f
+                                            smoothCarryY = 0f
+                                            if (isTapDragCandidate) {
+                                                holdTimerJob?.cancel()
+                                                engageTapDrag()
+                                            }
+                                        } else if (hasCrossedMoveSlop || tapDragEngaged) {
+                                            // Residual-conserving EMA smoothing eliminates micro-tremor without losing travel
+                                            val alpha = when {
+                                                stepDist < 1.2f -> 0.48f
+                                                stepDist < 5.0f -> 0.66f
+                                                else -> 0.85f
+                                            }
+                                            val sendX = (dx + smoothCarryX) * alpha
+                                            val sendY = (dy + smoothCarryY) * alpha
+                                            smoothCarryX = (dx + smoothCarryX) - sendX
+                                            smoothCarryY = (dy + smoothCarryY) - sendY
+                                            currentOnMove(sendX, sendY)
                                         }
                                         pressedPointers[0].consume()
                                     }
@@ -224,10 +374,10 @@ fun PrecisionTouchpadSection(
                                     )
                                     val spreadRatio = if (prevSpread > 24f) newSpread / prevSpread else 1f
                                     if (abs(spreadRatio - 1f) > 0.045f) {
-                                        onPinchZoom(spreadRatio)
+                                        currentOnPinchZoom(spreadRatio)
                                         prevSpread = newSpread
                                     } else if (abs(dx) > 0.2f || abs(dy) > 0.2f) {
-                                        onTwoFingerScroll(dx, dy)
+                                        currentOnTwoFingerScroll(dx, dy)
                                     }
                                     pressedPointers.forEach { it.consume() }
                                 }
@@ -235,20 +385,48 @@ fun PrecisionTouchpadSection(
                                 prevCentroid = centroid
                             }
 
+                            holdTimerJob?.cancel()
+                            // Flush any tiny remaining smoothed fractional delta cleanly when drag ends
+                            if (hasCrossedMoveSlop && (abs(smoothCarryX) > 0.25f || abs(smoothCarryY) > 0.25f)) {
+                                currentOnMove(smoothCarryX, smoothCarryY)
+                            }
+
                             val upTime = System.currentTimeMillis()
                             val duration = upTime - downTime
 
-                            if (tapDragStarted) {
+                            if (tapDragEngaged) {
                                 isTapDragHolding = false
-                                onLeftHoldChanged(false)
-                            } else if (totalTravel < touchSlop && duration < 260L) {
+                                currentOnLeftHoldChanged(false)
+                                lastSingleTapTime = 0L
+                            } else if (totalTravel < touchSlop && duration < 280L) {
                                 if (maxPointers == 1) {
-                                    lastSingleTapTime = upTime
-                                    onLeftClick()
-                                    triggerClickHaptic()
-                                    triggerRipple(prevCentroid, rightClick = false)
+                                    if (isTapDragCandidate) {
+                                        // User tapped twice quickly without dragging -> execute genuine double-click
+                                        lastSingleTapTime = 0L
+                                        triggerRipple(prevCentroid, rightClick = false)
+                                        triggerClickHaptic()
+                                        if (pendingWasWaiting) {
+                                            currentOnLeftClick()
+                                            scope.launch {
+                                                delay(55L)
+                                                currentOnLeftClick()
+                                            }
+                                        } else {
+                                            currentOnLeftClick()
+                                        }
+                                    } else {
+                                        // Wait 195ms before firing Click 1 so double-tap-drag can intercept cleanly
+                                        lastSingleTapTime = upTime
+                                        triggerRipple(prevCentroid, rightClick = false)
+                                        pendingSingleTapJob = scope.launch {
+                                            delay(195L)
+                                            currentOnLeftClick()
+                                            triggerClickHaptic()
+                                        }
+                                    }
                                 } else if (maxPointers >= 2) {
-                                    onRightClick()
+                                    lastSingleTapTime = 0L
+                                    currentOnRightClick()
                                     triggerClickHaptic(strong = true)
                                     triggerRipple(prevCentroid, rightClick = true)
                                 }
@@ -353,68 +531,24 @@ fun PrecisionTouchpadSection(
                 )
             }
 
-            // Dedicated Tactile Vertical Scroll Wheel Strip
-            ScrollWheelStrip(
-                hapticEnabled = hapticEnabled,
-                phaseOffset = wheelPhaseOffset,
-                onScrollDelta = { dy ->
-                    wheelPhaseOffset = (wheelPhaseOffset + dy) % 28f
-                    onWheelStripScroll(dy)
-                },
-                modifier = Modifier
-                    .width(54.dp)
-                    .fillMaxHeight(),
-            )
+            if (!leftHandedMode) {
+                // Dedicated Tactile Vertical Scroll Wheel Strip
+                ScrollWheelStrip(
+                    hapticEnabled = hapticEnabled,
+                    phaseOffset = wheelPhaseOffset,
+                    onScrollDelta = { dy ->
+                        wheelPhaseOffset = (wheelPhaseOffset + dy) % 28f
+                        onWheelStripScroll(dy)
+                    },
+                    modifier = Modifier
+                        .width(54.dp)
+                        .fillMaxHeight(),
+                )
+            }
         }
 
-        // Physical-Feel Mouse Buttons Deck (Left / Middle / Right)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            MouseHardwareButton(
-                label = stringResource(R.string.btn_left_click),
-                subLabel = "HOLD / DRAG",
-                isPressed = isLeftPressed,
-                onPressChanged = { pressed ->
-                    if (pressed) triggerClickHaptic()
-                    onLeftHoldChanged(pressed)
-                },
-                modifier = Modifier
-                    .weight(1.35f)
-                    .fillMaxHeight()
-                    .testTag("left_mouse_button"),
-            )
-
-            MouseHardwareButton(
-                label = stringResource(R.string.btn_middle_click),
-                subLabel = "WHEEL",
-                isPressed = isMiddlePressed,
-                onPressChanged = { pressed ->
-                    if (pressed) triggerClickHaptic()
-                    onMiddleHoldChanged(pressed)
-                },
-                modifier = Modifier
-                    .weight(0.7f)
-                    .fillMaxHeight()
-                    .testTag("middle_mouse_button"),
-            )
-
-            MouseHardwareButton(
-                label = stringResource(R.string.btn_right_click),
-                subLabel = "MENU",
-                isPressed = isRightPressed,
-                onPressChanged = { pressed ->
-                    if (pressed) triggerClickHaptic(strong = true)
-                    onRightHoldChanged(pressed)
-                },
-                modifier = Modifier
-                    .weight(1.35f)
-                    .fillMaxHeight()
-                    .testTag("right_mouse_button"),
-            )
+        if (buttonsPosition == MouseButtonsPosition.BOTTOM) {
+            mouseButtonsDeck()
         }
     }
 }

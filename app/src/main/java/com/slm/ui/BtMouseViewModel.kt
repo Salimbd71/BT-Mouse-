@@ -12,6 +12,7 @@ import com.slm.bluetooth.HidMotionEngine
 import com.slm.bluetooth.HidTelemetry
 import com.slm.bluetooth.PairedHostDevice
 import com.slm.data.AppSettings
+import com.slm.data.MouseButtonsPosition
 import com.slm.data.SettingsRepository
 import com.slm.data.ThemeMode
 import com.slm.data.TransportMode
@@ -19,13 +20,17 @@ import com.slm.wifi.FileTransferRepository
 import com.slm.wifi.FileTransferService
 import com.slm.wifi.FileTransferUiState
 import com.slm.wifi.PcFileOffer
+import com.slm.wifi.PcSystemAction
 import com.slm.wifi.WifiConnectionState
 import com.slm.wifi.WifiHostDevice
 import com.slm.wifi.WifiMouseController
+import com.slm.wifi.WifiPcToolsClient
+import com.slm.wifi.parseQrConnectPayload
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -38,6 +43,7 @@ enum class ControllerTab {
 
 data class BtMouseUiState(
     val settings: AppSettings = AppSettings(),
+    val settingsLoaded: Boolean = false,
     val connectionState: BtConnectionState = BtConnectionState.Initializing,
     val pairedDevices: List<PairedHostDevice> = emptyList(),
     val telemetry: HidTelemetry = HidTelemetry(),
@@ -57,6 +63,11 @@ data class BtMouseUiState(
     val showDevicesSheet: Boolean = false,
     val showSettingsSheet: Boolean = false,
     val showFileTransferSheet: Boolean = false,
+    val showPcToolsSheet: Boolean = false,
+    val showQrScannerDialog: Boolean = false,
+    val lastSyncedClipboard: String? = null,
+    val pcToolsStatus: String? = null,
+    val pcToolsBusy: Boolean = false,
 )
 
 class BtMouseViewModel(application: Application) : AndroidViewModel(application) {
@@ -79,6 +90,11 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
         val showDevicesSheet: Boolean = false,
         val showSettingsSheet: Boolean = false,
         val showFileTransferSheet: Boolean = false,
+        val showPcToolsSheet: Boolean = false,
+        val showQrScannerDialog: Boolean = false,
+        val lastSyncedClipboard: String? = null,
+        val pcToolsStatus: String? = null,
+        val pcToolsBusy: Boolean = false,
     )
 
     private data class BluetoothSnapshot(
@@ -114,12 +130,12 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
     }
 
     val uiState: StateFlow<BtMouseUiState> = combine(
-        settingsRepository.settingsFlow,
+        settingsRepository.settingsFlow.map { it to true },
         bluetoothSnapshot,
         wifiSnapshot,
         FileTransferRepository.state,
         _localUi,
-    ) { settings, bt, wifi, fileTransfer, local ->
+    ) { (settings, settingsLoaded), bt, wifi, fileTransfer, local ->
         hidController.updateSettings(
             pollingRateHz = settings.pollingRateHz,
             autoConnect = settings.autoConnect,
@@ -132,6 +148,7 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
         )
         BtMouseUiState(
             settings = settings,
+            settingsLoaded = settingsLoaded,
             connectionState = bt.connectionState,
             pairedDevices = bt.pairedDevices,
             telemetry = bt.telemetry,
@@ -151,6 +168,11 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
             showDevicesSheet = local.showDevicesSheet,
             showSettingsSheet = local.showSettingsSheet,
             showFileTransferSheet = local.showFileTransferSheet,
+            showPcToolsSheet = local.showPcToolsSheet,
+            showQrScannerDialog = local.showQrScannerDialog,
+            lastSyncedClipboard = local.lastSyncedClipboard,
+            pcToolsStatus = local.pcToolsStatus,
+            pcToolsBusy = local.pcToolsBusy,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -194,6 +216,12 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
 
     fun onPermissionsUpdated() {
         hidController.initialize()
+    }
+
+    fun markPermissionsOnboardingDone() {
+        viewModelScope.launch {
+            settingsRepository.setPermissionsOnboardingDone(true)
+        }
     }
 
     fun refreshDevices() {
@@ -240,6 +268,176 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
         if (visible) {
             refreshPcFileOffers()
         }
+    }
+
+    fun setPcToolsSheetVisible(visible: Boolean) {
+        _localUi.update { it.copy(showPcToolsSheet = visible) }
+    }
+
+    fun setQrScannerVisible(visible: Boolean) {
+        _localUi.update { it.copy(showQrScannerDialog = visible) }
+    }
+
+    fun connectFromQrCode(rawQr: String) {
+        val payload = parseQrConnectPayload(rawQr) ?: return
+        _localUi.update {
+            it.copy(
+                showQrScannerDialog = false,
+                showDevicesSheet = false,
+            )
+        }
+        viewModelScope.launch {
+            settingsRepository.setTransportMode(TransportMode.WIFI)
+            val bestIp = WifiPcToolsClient.pickBestReachableIp(payload.ips)
+            if (bestIp.isNotEmpty()) {
+                wifiController.connectToIp(bestIp, payload.hostName, payload.port)
+            }
+        }
+    }
+
+    fun sendVoiceText(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        if (isWifiMode()) {
+            wifiController.sendUnicodeText(clean)
+        } else {
+            hidController.sendTextString(clean)
+        }
+    }
+
+    fun sendPhoneClipboardToPc(text: String) {
+        val ip = wifiController.currentHostIp() ?: run {
+            _localUi.update { it.copy(pcToolsStatus = "Connect Wi-Fi PC first") }
+            return
+        }
+        if (text.isEmpty()) {
+            _localUi.update { it.copy(pcToolsStatus = "Phone clipboard is empty") }
+            return
+        }
+        viewModelScope.launch {
+            _localUi.update { it.copy(pcToolsBusy = true, pcToolsStatus = null) }
+            WifiPcToolsClient.sendClipboardToPc(ip, text)
+                .onSuccess {
+                    _localUi.update {
+                        it.copy(
+                            pcToolsBusy = false,
+                            lastSyncedClipboard = text,
+                            pcToolsStatus = "Clipboard sent to PC",
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _localUi.update {
+                        it.copy(
+                            pcToolsBusy = false,
+                            pcToolsStatus = err.message ?: "Failed to send clipboard",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun pasteClipboardOnActiveHost(text: String) {
+        if (text.isEmpty()) {
+            _localUi.update { it.copy(pcToolsStatus = "Phone clipboard is empty") }
+            return
+        }
+        val ip = wifiController.currentHostIp()
+        if (isWifiMode() && ip != null) {
+            viewModelScope.launch {
+                _localUi.update { it.copy(pcToolsBusy = true, pcToolsStatus = null) }
+                WifiPcToolsClient.sendClipboardToPc(ip, text)
+                    .onSuccess {
+                        wifiController.sendKeyPress(HidKeyMap.MOD_LEFT_CTRL, HidKeyMap.KEY_V)
+                        _localUi.update {
+                            it.copy(
+                                pcToolsBusy = false,
+                                lastSyncedClipboard = text,
+                                pcToolsStatus = "Pasted on PC",
+                            )
+                        }
+                    }
+                    .onFailure { err ->
+                        _localUi.update {
+                            it.copy(
+                                pcToolsBusy = false,
+                                pcToolsStatus = err.message ?: "Failed to paste on PC",
+                            )
+                        }
+                    }
+            }
+        } else {
+            hidController.sendTextString(text)
+            _localUi.update {
+                it.copy(
+                    lastSyncedClipboard = text,
+                    pcToolsStatus = "Typed clipboard onto active host",
+                )
+            }
+        }
+    }
+
+    fun fetchPcClipboardToPhone(onFetched: (String) -> Unit) {
+        val ip = wifiController.currentHostIp() ?: run {
+            _localUi.update { it.copy(pcToolsStatus = "Connect Wi-Fi PC first") }
+            return
+        }
+        viewModelScope.launch {
+            _localUi.update { it.copy(pcToolsBusy = true, pcToolsStatus = null) }
+            WifiPcToolsClient.getPcClipboard(ip)
+                .onSuccess { text ->
+                    onFetched(text)
+                    _localUi.update {
+                        it.copy(
+                            pcToolsBusy = false,
+                            lastSyncedClipboard = text.ifEmpty { null },
+                            pcToolsStatus = if (text.isEmpty()) {
+                                "PC clipboard has no text"
+                            } else {
+                                "Copied PC clipboard to phone"
+                            },
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _localUi.update {
+                        it.copy(
+                            pcToolsBusy = false,
+                            pcToolsStatus = err.message ?: "Failed to read PC clipboard",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun executePcSystemAction(action: PcSystemAction) {
+        val ip = wifiController.currentHostIp() ?: run {
+            _localUi.update { it.copy(pcToolsStatus = "Connect Wi-Fi PC first") }
+            return
+        }
+        viewModelScope.launch {
+            _localUi.update { it.copy(pcToolsBusy = true, pcToolsStatus = null) }
+            WifiPcToolsClient.sendSystemAction(ip, action)
+                .onSuccess {
+                    val msg = when (action) {
+                        PcSystemAction.SCREENSHOT -> "Screenshot saved in Downloads\\BT mouse Files & copied"
+                        else -> "${action.label} sent to PC"
+                    }
+                    _localUi.update { it.copy(pcToolsBusy = false, pcToolsStatus = msg) }
+                }
+                .onFailure { err ->
+                    _localUi.update {
+                        it.copy(
+                            pcToolsBusy = false,
+                            pcToolsStatus = err.message ?: "Failed: ${action.label}",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun clearPcToolsStatus() {
+        _localUi.update { it.copy(pcToolsStatus = null) }
     }
 
     fun sendFilesToPc(uris: List<Uri>) {
@@ -476,6 +674,14 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
 
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch { settingsRepository.setThemeMode(mode) }
+    }
+
+    fun setMouseButtonsPosition(position: MouseButtonsPosition) {
+        viewModelScope.launch { settingsRepository.setMouseButtonsPosition(position) }
+    }
+
+    fun setLeftHandedMode(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setLeftHandedMode(enabled) }
     }
 
     fun setPointerSensitivity(value: Float) {

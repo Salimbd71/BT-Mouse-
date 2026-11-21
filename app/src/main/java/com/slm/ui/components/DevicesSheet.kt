@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DevicesOther
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.LaptopWindows
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SettingsBluetooth
 import androidx.compose.material.icons.rounded.Tv
@@ -92,6 +93,7 @@ fun DevicesBottomSheet(
     onConnectDevice: (String) -> Unit,
     onDisconnectDevice: () -> Unit,
     onScanWifi: () -> Unit,
+    onOpenQrScanner: () -> Unit,
     onConnectWifi: (String, String?) -> Unit,
     onDisconnectWifi: () -> Unit,
     onAutoConnectChanged: (Boolean) -> Unit,
@@ -242,13 +244,31 @@ fun DevicesBottomSheet(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedButton(
-                        onClick = onScanWifi,
-                        modifier = Modifier.height(34.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        shape = RoundedCornerShape(10.dp),
-                    ) {
-                        Text("Scan PCs")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onOpenQrScanner,
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("wifi_scan_qr_btn"),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.QrCodeScanner,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Scan QR")
+                        }
+                        OutlinedButton(
+                            onClick = onScanWifi,
+                            modifier = Modifier.height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text("Scan PCs")
+                        }
                     }
                 }
 
@@ -261,7 +281,7 @@ fun DevicesBottomSheet(
                         Column(
                             modifier = Modifier.padding(18.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.LaptopWindows,
@@ -270,11 +290,18 @@ fun DevicesBottomSheet(
                                 modifier = Modifier.size(28.dp),
                             )
                             Text("No Windows PC found yet", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = "1. Download & run BTMouseReceiver-Setup.exe on your Windows laptop.\n2. Make sure phone & laptop are on the same Wi-Fi.\n3. Tap 'Scan PCs' or enter the IP shown in the laptop window.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Button(
+                                onClick = onOpenQrScanner,
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.QrCodeScanner,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Scan PC QR Code")
+                            }
                         }
                     }
                 } else {

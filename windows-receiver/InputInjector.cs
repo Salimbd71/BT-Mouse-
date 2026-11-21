@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace BTMouseReceiver;
@@ -76,24 +77,100 @@ internal static class InputInjector
 
     private static readonly int InputSize = Marshal.SizeOf<INPUT>();
 
+    private static readonly object SmoothLock = new();
+    private static readonly AutoResetEvent SmoothSignal = new(false);
+    private static double _remX;
+    private static double _remY;
+
+    static InputInjector()
+    {
+        var smootherThread = new Thread(RunSmoothLoop)
+        {
+            IsBackground = true,
+            Name = "MouseMotionSmoother",
+            Priority = ThreadPriority.AboveNormal,
+        };
+        smootherThread.Start();
+    }
+
+    private static void RunSmoothLoop()
+    {
+        long freq = Stopwatch.Frequency;
+        long stepTicks = (long)(freq * 0.0025); // ~400Hz smooth sub-step cadence
+        while (true)
+        {
+            SmoothSignal.WaitOne(15);
+            while (true)
+            {
+                long startTick = Stopwatch.GetTimestamp();
+                int emitX = 0;
+                int emitY = 0;
+                bool keepRunning;
+
+                lock (SmoothLock)
+                {
+                    if (Math.Abs(_remX) < 0.15 && Math.Abs(_remY) < 0.15)
+                    {
+                        _remX = 0;
+                        _remY = 0;
+                        keepRunning = false;
+                    }
+                    else
+                    {
+                        double stepX = Math.Abs(_remX) <= 1.25 ? _remX : _remX * 0.45;
+                        double stepY = Math.Abs(_remY) <= 1.25 ? _remY : _remY * 0.45;
+                        emitX = (int)Math.Round(stepX, MidpointRounding.AwayFromZero);
+                        emitY = (int)Math.Round(stepY, MidpointRounding.AwayFromZero);
+
+                        if (emitX == 0 && Math.Abs(_remX) >= 0.5) emitX = Math.Sign(_remX);
+                        if (emitY == 0 && Math.Abs(_remY) >= 0.5) emitY = Math.Sign(_remY);
+
+                        _remX -= emitX;
+                        _remY -= emitY;
+                        keepRunning = Math.Abs(_remX) >= 0.15 || Math.Abs(_remY) >= 0.15;
+                    }
+                }
+
+                if (emitX != 0 || emitY != 0)
+                {
+                    INPUT[] moveInput = { MakeMouseInput(emitX, emitY, 0, MouseEventMove) };
+                    SendBatch(moveInput);
+                }
+
+                if (!keepRunning) break;
+
+                long targetTick = startTick + stepTicks;
+                while (Stopwatch.GetTimestamp() < targetTick)
+                {
+                    Thread.Sleep(1);
+                }
+            }
+        }
+    }
+
     public static void MoveAndScroll(sbyte dx, sbyte dy, sbyte wheelV, sbyte wheelH)
     {
-        var list = new List<INPUT>(3);
         if (dx != 0 || dy != 0)
         {
-            list.Add(MakeMouseInput(dx, dy, 0, MouseEventMove));
-        }
-        if (wheelV != 0)
-        {
-            list.Add(MakeMouseInput(0, 0, wheelV * WheelDelta, MouseEventWheel));
-        }
-        if (wheelH != 0)
-        {
-            list.Add(MakeMouseInput(0, 0, wheelH * WheelDelta, MouseEventHWheel));
+            lock (SmoothLock)
+            {
+                _remX = Math.Clamp(_remX + dx, -600, 600);
+                _remY = Math.Clamp(_remY + dy, -600, 600);
+            }
+            SmoothSignal.Set();
         }
 
-        if (list.Count > 0)
+        if (wheelV != 0 || wheelH != 0)
         {
+            var list = new List<INPUT>(2);
+            if (wheelV != 0)
+            {
+                list.Add(MakeMouseInput(0, 0, wheelV * WheelDelta, MouseEventWheel));
+            }
+            if (wheelH != 0)
+            {
+                list.Add(MakeMouseInput(0, 0, wheelH * WheelDelta, MouseEventHWheel));
+            }
             SendBatch(list.ToArray());
         }
     }

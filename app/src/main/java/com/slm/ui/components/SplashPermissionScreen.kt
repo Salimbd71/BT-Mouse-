@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,13 +36,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Bluetooth
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Mouse
 import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -52,7 +55,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +65,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -67,17 +74,15 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.res.stringResource
 import com.slm.BuildConfig
 import com.slm.R
 import com.slm.bluetooth.BluetoothHidController
-import com.slm.ui.theme.ConnectedEmerald
-import com.slm.ui.theme.PairingAmber
 import kotlinx.coroutines.delay
 
 fun requiredLaunchPermissions(hidController: BluetoothHidController): Array<String> {
     val permissions = linkedSetOf<String>()
     permissions.addAll(hidController.requiredPermissions())
+    permissions.add(Manifest.permission.RECORD_AUDIO)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         permissions.add(Manifest.permission.POST_NOTIFICATIONS)
     }
@@ -91,6 +96,11 @@ private fun isPermissionGranted(context: Context, permission: String): Boolean {
     return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 }
 
+fun hasAllRequiredLaunchPermissions(
+    context: Context,
+    hidController: BluetoothHidController,
+): Boolean = requiredLaunchPermissions(hidController).all { isPermissionGranted(context, it) }
+
 @Composable
 fun SplashPermissionScreen(
     hidController: BluetoothHidController,
@@ -102,13 +112,39 @@ fun SplashPermissionScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionCheckTick by remember { mutableIntStateOf(0) }
 
-    val allPermissions = remember(hidController) { requiredLaunchPermissions(hidController) }
+    var allowBluetooth by rememberSaveable { mutableStateOf(true) }
+    var allowMicrophone by rememberSaveable { mutableStateOf(true) }
+    var allowNotifications by rememberSaveable { mutableStateOf(true) }
+    var allowStorage by rememberSaveable { mutableStateOf(true) }
+
+    val selectedPermissions = remember(
+        allowBluetooth,
+        allowMicrophone,
+        allowNotifications,
+        allowStorage,
+        hidController,
+    ) {
+        buildList {
+            if (allowBluetooth) addAll(hidController.requiredPermissions())
+            if (allowMicrophone) add(Manifest.permission.RECORD_AUDIO)
+            if (allowNotifications && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (allowStorage && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }.distinct()
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         permissionCheckTick++
         onPermissionsUpdated()
+        val remainingSelected = selectedPermissions.filterNot { isPermissionGranted(context, it) }
+        if (remainingSelected.isEmpty()) {
+            onContinue()
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -125,6 +161,9 @@ fun SplashPermissionScreen(
     val btGranted = remember(permissionCheckTick, hidController) {
         hidController.requiredPermissions().all { isPermissionGranted(context, it) }
     }
+    val micGranted = remember(permissionCheckTick) {
+        isPermissionGranted(context, Manifest.permission.RECORD_AUDIO)
+    }
     val notificationsGranted = remember(permissionCheckTick) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             isPermissionGranted(context, Manifest.permission.POST_NOTIFICATIONS)
@@ -139,11 +178,11 @@ fun SplashPermissionScreen(
             true
         }
     }
-    val allGranted = btGranted && notificationsGranted && storageGranted
+    val allGranted = btGranted && micGranted && notificationsGranted && storageGranted
 
     LaunchedEffect(allGranted) {
         if (allGranted) {
-            delay(750L)
+            delay(350L)
             onPermissionsUpdated()
             onContinue()
         }
@@ -221,33 +260,81 @@ fun SplashPermissionScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         PermissionStatusRow(
                             icon = Icons.Rounded.Bluetooth,
                             title = "Bluetooth & Nearby Devices",
-                            subtitle = "Pair & control Smart TVs and Windows laptops wirelessly",
+                            subtitle = if (btGranted) {
+                                "Granted • Pair & control Smart TVs and Windows laptops"
+                            } else {
+                                "Pair & control Smart TVs and Windows laptops wirelessly"
+                            },
                             granted = btGranted,
+                            checked = allowBluetooth,
+                            onCheckedChange = { allowBluetooth = it },
+                            rowTestTag = "perm_row_bluetooth",
+                            checkboxTestTag = "perm_checkbox_bluetooth",
+                        )
+                        PermissionStatusRow(
+                            icon = Icons.Rounded.Mic,
+                            title = "Microphone (Voice Typing)",
+                            subtitle = if (micGranted) {
+                                "Granted • Voice-to-text typing for PC & Smart TV"
+                            } else {
+                                "Speak to type text directly on Windows PC & TV"
+                            },
+                            granted = micGranted,
+                            checked = allowMicrophone,
+                            onCheckedChange = { allowMicrophone = it },
+                            rowTestTag = "perm_row_microphone",
+                            checkboxTestTag = "perm_checkbox_microphone",
                         )
                         PermissionStatusRow(
                             icon = Icons.Rounded.NotificationsActive,
                             title = "Background Transfer Notification",
-                            subtitle = "Keep sending/receiving files when closed & show Cancel control",
+                            subtitle = if (notificationsGranted) {
+                                "Granted • Background file progress & Cancel control"
+                            } else {
+                                "Keep sending/receiving files when closed & show Cancel control"
+                            },
                             granted = notificationsGranted,
+                            checked = allowNotifications,
+                            onCheckedChange = { allowNotifications = it },
+                            rowTestTag = "perm_row_notifications",
+                            checkboxTestTag = "perm_checkbox_notifications",
                         )
                         PermissionStatusRow(
                             icon = Icons.Rounded.FolderOpen,
                             title = "Downloads Storage Access",
-                            subtitle = "Save files received from PC into Downloads/BT mouse",
+                            subtitle = if (storageGranted) {
+                                "Granted • Save files from PC into Downloads/BT mouse"
+                            } else {
+                                "Save files received from PC into Downloads/BT mouse"
+                            },
                             granted = storageGranted,
+                            checked = allowStorage,
+                            onCheckedChange = { allowStorage = it },
+                            rowTestTag = "perm_row_storage",
+                            checkboxTestTag = "perm_checkbox_storage",
                         )
                     }
                 }
 
                 if (!allGranted) {
+                    val pendingSelected = remember(selectedPermissions, permissionCheckTick) {
+                        selectedPermissions.filterNot { isPermissionGranted(context, it) }
+                    }
                     Button(
-                        onClick = { permissionLauncher.launch(allPermissions) },
+                        onClick = {
+                            if (pendingSelected.isNotEmpty()) {
+                                permissionLauncher.launch(pendingSelected.toTypedArray())
+                            } else {
+                                onPermissionsUpdated()
+                                onContinue()
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
@@ -256,7 +343,13 @@ fun SplashPermissionScreen(
                     ) {
                         Icon(Icons.Rounded.Security, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Allow Required Permissions")
+                        Text(
+                            text = if (pendingSelected.isNotEmpty()) {
+                                "Allow Selected Permissions"
+                            } else {
+                                "Save & Continue"
+                            },
+                        )
                     }
 
                     Row(
@@ -319,26 +412,34 @@ private fun PermissionStatusRow(
     title: String,
     subtitle: String,
     granted: Boolean,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    rowTestTag: String,
+    checkboxTestTag: String,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(role = Role.Checkbox) { onCheckedChange(!checked) }
+            .padding(horizontal = 6.dp, vertical = 6.dp)
+            .testTag(rowTestTag),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        val appAccentColor = MaterialTheme.colorScheme.primary
         Box(
             modifier = Modifier
                 .size(38.dp)
                 .clip(CircleShape)
-                .background(
-                    if (granted) ConnectedEmerald.copy(alpha = 0.14f)
-                    else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                ),
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (granted) ConnectedEmerald else MaterialTheme.colorScheme.primary,
+                tint = appAccentColor,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -352,15 +453,19 @@ private fun PermissionStatusRow(
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (granted) appAccentColor else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        Icon(
-            imageVector = if (granted) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-            contentDescription = if (granted) "Granted" else "Needed",
-            tint = if (granted) ConnectedEmerald else PairingAmber,
-            modifier = Modifier.size(22.dp),
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = CheckboxDefaults.colors(
+                checkedColor = appAccentColor,
+                checkmarkColor = MaterialTheme.colorScheme.onPrimary,
+                uncheckedColor = appAccentColor,
+            ),
+            modifier = Modifier.testTag(checkboxTestTag),
         )
     }
 }
