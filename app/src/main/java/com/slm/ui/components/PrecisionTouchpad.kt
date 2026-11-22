@@ -134,6 +134,7 @@ fun PrecisionTouchpadSection(
 
     val mouseButtonsDeck: @Composable () -> Unit = {
         val leftSlotIsRightClick = leftHandedMode
+        // Left-Handed Mode swaps Left and Right positions
         val firstLabel = stringResource(if (leftSlotIsRightClick) R.string.btn_right_click else R.string.btn_left_click)
         val firstSub = if (leftSlotIsRightClick) "MENU" else "HOLD / DRAG"
         val firstPressed = if (leftSlotIsRightClick) isRightPressed else isLeftPressed

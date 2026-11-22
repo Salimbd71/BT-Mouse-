@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -16,7 +17,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.PrivacyTip
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
@@ -29,8 +33,13 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -262,8 +271,155 @@ fun SettingsBottomSheet(
                 testTag = "haptic_switch",
             )
 
+            LegalPoliciesCard()
+
             AboutDeveloperCard()
         }
+    }
+}
+
+@Composable
+private fun LegalPoliciesCard() {
+    var showPrivacyDialog by remember { mutableStateOf(false) }
+    var showTermsDialog by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            onClick = { showPrivacyDialog = true },
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth().testTag("settings_privacy_policy_card"),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PrivacyTip,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Privacy Policy", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "Data protection & permission usage",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Surface(
+            onClick = { showTermsDialog = true },
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth().testTag("settings_terms_card"),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Description,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Terms & Conditions", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "Usage guidelines & compliance",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+
+    if (showPrivacyDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showPrivacyDialog = false },
+            title = { Text("Privacy Policy") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(340.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "BT/WiFi Mouse With File Transfer ('App') respects your privacy and is committed to protecting your personal data in compliance with Google Play Developer Policies.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "1. Local Network & Bluetooth Connectivity:\nAll wireless mouse cursor movements, keyboard keystrokes, remote control commands, and file transfers operate strictly over your local Wi-Fi network (UDP/TCP) or direct Bluetooth HID profile between your Android device and Windows PC / Smart TV. No data is sent or stored on external cloud servers.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "2. Required Permissions & Clarification:\n• Bluetooth / Nearby Devices (BLUETOOTH_CONNECT, BLUETOOTH_SCAN, BLUETOOTH_ADVERTISE): Used exclusively to pair and communicate with Windows PCs and Android Smart TVs as a standard Bluetooth HID mouse/keyboard peripheral.\n• Microphone (RECORD_AUDIO): Used strictly on-device for the optional Voice-to-Text typing feature (RecognizerIntent) to convert spoken speech into text sent to your PC. Audio is never recorded, saved, or uploaded.\n• Notifications (POST_NOTIFICATIONS): Required on Android 13+ to display ongoing foreground service notification during Wi-Fi file transfer so you can monitor progress and cancel transfers.\n• Storage / Files: Used exclusively to save files received from your Windows PC into your local Downloads/BT mouse Files folder.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "3. Zero Data Collection:\nWe do not collect, harvest, log, or share any personal user information, keystrokes, clipboard contents, or transferred files.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showPrivacyDialog = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+
+    if (showTermsDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showTermsDialog = false },
+            title = { Text("Terms & Conditions") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(340.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "By downloading, installing, or using BT/WiFi Mouse With File Transfer, you agree to be bound by these Terms & Conditions.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "1. Acceptance of Terms:\nYou agree to use this application only for lawful purposes related to controlling your personal computers and smart TVs, and transferring files within your local network.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "2. Intellectual Property & Licensing:\nThis software is governed by the terms of the accompanying LICENSE file included in the project distribution. Unauthorized redistribution of modified binaries for malicious purposes is prohibited.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "3. Limitation of Liability:\nThe application is provided 'as is' without warranties of any kind, either express or implied. The developer shall not be held liable for any incidental or consequential damages resulting from the use or inability to use the app.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showTermsDialog = false }) {
+                    Text("Close")
+                }
+            },
+        )
     }
 }
 
