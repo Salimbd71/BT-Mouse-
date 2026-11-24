@@ -3,6 +3,7 @@ package com.slm
 import android.Manifest
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.slm.ads.AdMobIds
 import com.slm.bluetooth.BluetoothHidController
 import com.slm.bluetooth.HidMotionEngine
 import com.slm.data.AppSettings
@@ -22,7 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], manifest = Config.NONE)
+@Config(sdk = [36])
 class ExampleRobolectricTest {
 
     @Test
@@ -30,7 +31,11 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("BT/WiFi Mouse With File Transfer", appName)
+        assertEquals("com.slm.btmouse", BuildConfig.APPLICATION_ID)
         assertEquals("1.0", BuildConfig.VERSION_NAME)
+        assertEquals("ca-app-pub-3239967742299196~9829622978", AdMobIds.APP_ID)
+        assertEquals("ca-app-pub-3239967742299196/4525325407", AdMobIds.BANNER_UNIT_ID)
+        assertEquals("ca-app-pub-3239967742299196/6987516412", AdMobIds.INTERSTITIAL_UNIT_ID)
         assertTrue(BuildConfig.WINDOWS_RECEIVER_URL.endsWith("/BTMouseReceiver-Setup.exe"))
         assertTrue(BuildConfig.ANDROID_APK_URL.endsWith("/BT-mouse-release.apk"))
     }

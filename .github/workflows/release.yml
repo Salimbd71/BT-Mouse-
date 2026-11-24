@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       app_version:
-        description: "App version (current: 1.0)"
-        required: true
+        description: "App version (leave blank for auto version)"
+        required: false
         type: string
-        default: "1.0"
+        default: ""
       run_unit_tests:
         description: "Run unit tests"
         required: false
@@ -38,23 +38,38 @@ on:
         default: false
 
 jobs:
-  build-android:
-    name: Build Android & Run Tests
-    if: ${{ inputs.run_unit_tests || inputs.build_release_apk || inputs.build_debug_apk }}
+  resolve-version:
+    name: Resolve Release Version
     runs-on: ubuntu-latest
-
+    outputs:
+      version_name: ${{ steps.resolve.outputs.version_name }}
+      version_code: ${{ steps.resolve.outputs.version_code }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Resolve version properties
+      - name: Compute version
+        id: resolve
         shell: bash
         run: |
           set -euo pipefail
           RAW_VER="${{ inputs.app_version }}"
+          RAW_VER="${RAW_VER// /}"
           VERSION_NAME="${RAW_VER#v}"
           if [ -z "$VERSION_NAME" ]; then
-            VERSION_NAME="1.0"
+            LATEST_TAG=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1 || true)
+            LATEST_VER="${LATEST_TAG#v}"
+            if [[ "$LATEST_VER" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]]; then
+              M="${BASH_REMATCH[1]}"
+              N="${BASH_REMATCH[2]}"
+              P="${BASH_REMATCH[4]:-0}"
+              P=$((P + 1))
+              VERSION_NAME="${M}.${N}.${P}"
+            else
+              VERSION_NAME="1.0.${{ github.run_number }}"
+            fi
           fi
           IFS='.' read -r MAJOR MINOR PATCH _ <<< "${VERSION_NAME//[^0-9.]/}"
           MAJOR="${MAJOR:-1}"
@@ -68,6 +83,26 @@ jobs:
           if [ "$VERSION_CODE" -lt 1 ]; then
             VERSION_CODE="${{ github.run_number }}"
           fi
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION_NAME (versionCode=$VERSION_CODE)"
+
+  build-android:
+    name: Build Android & Run Tests
+    needs: resolve-version
+    if: ${{ inputs.run_unit_tests || inputs.build_release_apk || inputs.build_debug_apk }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Resolve version properties
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NAME="${{ needs.resolve-version.outputs.version_name }}"
+          VERSION_CODE="${{ needs.resolve-version.outputs.version_code }}"
           RECEIVER_URL="${{ github.server_url }}/${{ github.repository }}/releases/latest/download/BTMouseReceiver-Setup.exe"
           APK_URL="${{ github.server_url }}/${{ github.repository }}/releases/latest/download/BT-mouse-release.apk"
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
@@ -127,6 +162,7 @@ jobs:
 
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
             "platform-tools" \
+            "platforms;android-35" \
             "platforms;android-36" \
             "platforms;android-36.1" \
             "build-tools;36.0.0"
@@ -209,6 +245,7 @@ jobs:
 
   build-windows-exe:
     name: Build Windows Receiver (.exe)
+    needs: resolve-version
     if: ${{ inputs.build_setup_exe || inputs.build_portable_exe }}
     runs-on: windows-latest
 
@@ -224,8 +261,7 @@ jobs:
       - name: Publish self-contained BTMouseReceiver.exe
         shell: pwsh
         run: |
-          $rawVer = "${{ inputs.app_version }}".TrimStart('v')
-          if ([string]::IsNullOrWhiteSpace($rawVer)) { $rawVer = "1.0" }
+          $rawVer = "${{ needs.resolve-version.outputs.version_name }}"
           $numVer = ($rawVer -replace '[^0-9.]', '')
           if ([string]::IsNullOrWhiteSpace($numVer)) { $numVer = "1.0" }
           dotnet publish windows-receiver/BTMouseReceiver.csproj `
@@ -238,8 +274,7 @@ jobs:
         if: ${{ inputs.build_setup_exe }}
         shell: pwsh
         run: |
-          $rawVer = "${{ inputs.app_version }}".TrimStart('v')
-          if ([string]::IsNullOrWhiteSpace($rawVer)) { $rawVer = "1.0" }
+          $rawVer = "${{ needs.resolve-version.outputs.version_name }}"
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
@@ -269,7 +304,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: [build-android, build-windows-exe]
+    needs: [resolve-version, build-android, build-windows-exe]
     if: ${{ always() && (inputs.build_release_apk || inputs.build_debug_apk || inputs.build_setup_exe || inputs.build_portable_exe) && (needs.build-android.result == 'success' || needs.build-android.result == 'skipped') && (needs.build-windows-exe.result == 'success' || needs.build-windows-exe.result == 'skipped') }}
     runs-on: ubuntu-latest
 
@@ -311,11 +346,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RAW_VER="${{ inputs.app_version }}"
-          VERSION_NAME="${RAW_VER#v}"
-          if [ -z "$VERSION_NAME" ]; then
-            VERSION_NAME="1.0"
-          fi
+          VERSION_NAME="${{ needs.resolve-version.outputs.version_name }}"
           TAG="v${VERSION_NAME}"
 
           mkdir -p release-assets

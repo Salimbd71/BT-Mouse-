@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -76,7 +77,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,6 +93,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.slm.R
+import com.slm.ads.AdMobBanner
+import com.slm.ads.InterstitialAdManager
+import com.slm.ads.findActivity
 import com.slm.bluetooth.BtConnectionState
 import com.slm.bluetooth.HidKeyMap
 import com.slm.bluetooth.HostDeviceType
@@ -116,6 +122,12 @@ fun BtMouseScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val interstitialManager = remember { InterstitialAdManager() }
+
+    LaunchedEffect(context) {
+        interstitialManager.loadAd(context)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -196,6 +208,13 @@ fun BtMouseScreen(
         modifier = modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
+        bottomBar = {
+            AdMobBanner(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+            )
+        },
     ) { innerPadding ->
         BoxWithConstraints(
             modifier = Modifier
@@ -573,7 +592,10 @@ fun BtMouseScreen(
     if (uiState.showSettingsSheet) {
         SettingsBottomSheet(
             settings = uiState.settings,
-            onDismiss = { viewModel.setSettingsSheetVisible(false) },
+            onDismiss = {
+                viewModel.setSettingsSheetVisible(false)
+                interstitialManager.showIfReady(activity)
+            },
             onThemeModeChanged = viewModel::setThemeMode,
             onMouseButtonsPositionChanged = viewModel::setMouseButtonsPosition,
             onLeftHandedChanged = viewModel::setLeftHandedMode,
@@ -590,7 +612,12 @@ fun BtMouseScreen(
         FileTransferBottomSheet(
             wifiConnectionState = uiState.wifiConnectionState,
             transferState = uiState.fileTransferState,
-            onDismiss = { viewModel.setFileTransferSheetVisible(false) },
+            onDismiss = {
+                viewModel.setFileTransferSheetVisible(false)
+                if (!uiState.fileTransferState.isBusy) {
+                    interstitialManager.showIfReady(activity)
+                }
+            },
             onConnectWifiPc = {
                 viewModel.setFileTransferSheetVisible(false)
                 viewModel.selectTransportMode(TransportMode.WIFI)
@@ -611,7 +638,10 @@ fun BtMouseScreen(
             lastSyncedClipboard = uiState.lastSyncedClipboard,
             statusMessage = uiState.pcToolsStatus,
             isBusy = uiState.pcToolsBusy,
-            onDismiss = { viewModel.setPcToolsSheetVisible(false) },
+            onDismiss = {
+                viewModel.setPcToolsSheetVisible(false)
+                interstitialManager.showIfReady(activity)
+            },
             onConnectWifiPc = {
                 viewModel.setPcToolsSheetVisible(false)
                 viewModel.selectTransportMode(TransportMode.WIFI)

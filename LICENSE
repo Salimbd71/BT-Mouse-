@@ -1,12 +1,31 @@
-Copyright (c) 2026 Salimbd71
+Proprietary License — All Rights Reserved
 
-All Rights Reserved.
+Copyright (c) 2026 Salim
+All rights reserved.
 
-No permission is granted to use, copy, modify, merge, publish, distribute,
-sublicense, sell, or otherwise exploit this software or any portion of its
-source code, except with prior written permission from the copyright holder.
+This software, including all source code, Android application files, Windows
+receiver code, installers, UI designs, icons, documentation, and associated
+media files ("Software"), is the exclusive intellectual property of Salim.
 
-This software is provided "as is", without warranty of any kind, express or
-implied. In no event shall the copyright holder be liable for any claim,
-damages, or other liability arising from or relating to this software or its
-use.
+1. Restrictions
+Without prior explicit written permission from the copyright holder, you may NOT:
+- Copy, clone, fork for redistribution, publish, or mirror this Software or
+  any substantial portion of it;
+- Modify, adapt, translate, decompile, reverse-engineer, or create derivative
+  works based on this Software;
+- Sell, sublicense, rent, lease, distribute, or commercially exploit this
+  Software or any compiled binaries derived from it;
+- Repackage, rebrand, or upload this Software to Google Play Store, GitHub,
+  or any other software repository or marketplace under your own name.
+
+2. Permitted Use
+End users are granted a limited, non-exclusive, non-transferable license solely
+to install and run official compiled releases of the Software for personal
+wireless PC/TV control and local network file transfer.
+
+3. Disclaimer
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM THE USE OF THIS SOFTWARE.

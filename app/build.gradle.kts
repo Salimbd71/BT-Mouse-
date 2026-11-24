@@ -13,9 +13,9 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.btmouse.qxvmrt"
+    applicationId = "com.slm.btmouse"
     minSdk = 24
-    targetSdk = 36
+    targetSdk = 35
     versionCode = providers.gradleProperty("appVersionCode").orNull?.trim()?.toIntOrNull() ?: 1
     versionName = providers.gradleProperty("appVersionName").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: "1.0"
 
@@ -132,6 +132,7 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.zxing.core)
+  implementation(libs.play.services.ads)
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)
