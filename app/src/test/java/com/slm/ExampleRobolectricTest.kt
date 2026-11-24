@@ -11,6 +11,7 @@ import com.slm.data.MouseButtonsPosition
 import com.slm.data.TransportMode
 import com.slm.ui.components.requiredLaunchPermissions
 import com.slm.wifi.FileTransferRepository
+import com.slm.wifi.WifiMouseController
 import com.slm.wifi.WifiProtocol
 import com.slm.wifi.parseQrConnectPayload
 import org.junit.Assert.assertEquals
@@ -88,5 +89,33 @@ class ExampleRobolectricTest {
         FileTransferRepository.clearError()
         FileTransferRepository.resetCancelFlag()
         assertNull(FileTransferRepository.state.value.errorMessage)
+    }
+
+    @Test
+    fun `wifi auto reconnect matches saved ip or hostname when router ip changes`() {
+        assertTrue(
+            WifiMouseController.matchesPreferredHost(
+                ip = "192.168.1.50",
+                hostName = "OTHER-PC",
+                preferredIp = "192.168.1.50",
+                preferredHostName = "SALIM-PC",
+            ),
+        )
+        assertTrue(
+            WifiMouseController.matchesPreferredHost(
+                ip = "192.168.1.88",
+                hostName = "salim-pc",
+                preferredIp = "192.168.1.50",
+                preferredHostName = "SALIM-PC",
+            ),
+        )
+        assertFalse(
+            WifiMouseController.matchesPreferredHost(
+                ip = "192.168.1.88",
+                hostName = "GUEST-PC",
+                preferredIp = "192.168.1.50",
+                preferredHostName = "SALIM-PC",
+            ),
+        )
     }
 }

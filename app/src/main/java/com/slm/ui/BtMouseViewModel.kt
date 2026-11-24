@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -145,6 +146,7 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
             pollingRateHz = settings.pollingRateHz,
             autoConnect = settings.autoConnect,
             lastIp = settings.lastWifiHostIp,
+            lastHostName = settings.lastWifiHostName,
         )
         BtMouseUiState(
             settings = settings,
@@ -199,7 +201,18 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         hidController.initialize()
-        wifiController.startDiscovery(autoConnectIfFound = true)
+        viewModelScope.launch {
+            val initialSettings = settingsRepository.settingsFlow.first()
+            wifiController.updateSettings(
+                pollingRateHz = initialSettings.pollingRateHz,
+                autoConnect = initialSettings.autoConnect,
+                lastIp = initialSettings.lastWifiHostIp,
+                lastHostName = initialSettings.lastWifiHostName,
+            )
+            if (initialSettings.transportMode == TransportMode.WIFI) {
+                wifiController.tryAutoReconnect(force = true)
+            }
+        }
     }
 
     private fun isWifiMode(): Boolean = uiState.value.settings.transportMode == TransportMode.WIFI
@@ -210,7 +223,7 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
             settingsRepository.setTransportMode(mode)
         }
         if (mode == TransportMode.WIFI) {
-            wifiController.startDiscovery(autoConnectIfFound = true)
+            wifiController.tryAutoReconnect(force = true)
         }
     }
 
@@ -227,7 +240,7 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
     fun refreshDevices() {
         hidController.refreshPairedDevices()
         if (isWifiMode()) {
-            wifiController.startDiscovery(autoConnectIfFound = false)
+            wifiController.tryAutoReconnect()
         }
     }
 

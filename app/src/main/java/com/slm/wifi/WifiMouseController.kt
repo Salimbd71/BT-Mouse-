@@ -162,6 +162,7 @@ class WifiMouseController(
     private var activePollingHz = 125
     private var autoConnectEnabled = true
     private var preferredIp: String? = null
+    private var preferredHostName: String? = null
     private var activeHostAddress: InetAddress? = null
     private var activeHostIp: String? = null
     private var activeHostName: String? = null
@@ -170,19 +171,44 @@ class WifiMouseController(
     private var lastPongReceivedAtMs: Long = 0L
     private val seqCounter = AtomicInteger(1)
     private var hasAutoTried = false
+    private var manuallyDisconnected = false
 
     var onHostConnected: ((ip: String, name: String) -> Unit)? = null
     var onFileOffersAvailable: ((offerCount: Int) -> Unit)? = null
 
     fun currentHostIp(): String? = activeHostIp
 
-    fun updateSettings(pollingRateHz: Int, autoConnect: Boolean, lastIp: String?) {
+    fun updateSettings(
+        pollingRateHz: Int,
+        autoConnect: Boolean,
+        lastIp: String?,
+        lastHostName: String? = null,
+    ) {
         activePollingHz = pollingRateHz
         autoConnectEnabled = autoConnect
         preferredIp = lastIp
+        preferredHostName = lastHostName
     }
 
-    fun startDiscovery(autoConnectIfFound: Boolean = false) {
+    fun tryAutoReconnect(force: Boolean = false) {
+        if (!autoConnectEnabled) return
+        if (manuallyDisconnected && !force) return
+        val state = _connectionState.value
+        if (state is WifiConnectionState.Connected || state is WifiConnectionState.Connecting) return
+        if (preferredIp.isNullOrBlank() && preferredHostName.isNullOrBlank()) {
+            startDiscovery(autoConnectIfFound = false)
+            return
+        }
+        if (force) {
+            manuallyDisconnected = false
+        }
+        startDiscovery(autoConnectIfFound = true, resetAutoTry = true)
+    }
+
+    fun startDiscovery(autoConnectIfFound: Boolean = false, resetAutoTry: Boolean = false) {
+        if (resetAutoTry) {
+            hasAutoTried = false
+        }
         ensureControlSocketOpen()
         if (_connectionState.value !is WifiConnectionState.Connected &&
             _connectionState.value !is WifiConnectionState.Connecting
@@ -202,7 +228,13 @@ class WifiMouseController(
             val foundMap = linkedMapOf<String, WifiHostDevice>()
             val phoneLabel = (Build.MODEL ?: "Android").take(32)
             val probeBytes = "BTMOUSE_DISCOVER_V1|$phoneLabel".toByteArray(Charsets.UTF_8)
-            val targets = collectBroadcastAddresses()
+            val targets = buildList {
+                val savedIp = preferredIp?.trim().orEmpty()
+                if (savedIp.isNotEmpty()) {
+                    runCatching { InetAddress.getByName(savedIp) }.getOrNull()?.let { add(it) }
+                }
+                addAll(collectBroadcastAddresses())
+            }.distinctBy { it.hostAddress }
 
             for (round in 0 until 3) {
                 if (!isActive) return@launch
@@ -238,8 +270,9 @@ class WifiMouseController(
 
                         if (autoConnectIfFound &&
                             autoConnectEnabled &&
+                            !manuallyDisconnected &&
                             !hasAutoTried &&
-                            ip == preferredIp &&
+                            matchesPreferredHost(ip = ip, hostName = hostName, preferredIp = preferredIp, preferredHostName = preferredHostName) &&
                             _connectionState.value !is WifiConnectionState.Connected
                         ) {
                             hasAutoTried = true
@@ -268,6 +301,7 @@ class WifiMouseController(
         val trimmed = ip.trim()
         if (trimmed.isEmpty()) return
 
+        manuallyDisconnected = false
         ensureControlSocketOpen()
         val displayName = knownName ?: trimmed
         _connectionState.value = WifiConnectionState.Connecting(displayName, trimmed)
@@ -303,6 +337,7 @@ class WifiMouseController(
     }
 
     fun disconnect() {
+        manuallyDisconnected = true
         connectTimeoutJob?.cancel()
         heartbeatJob?.cancel()
         activeHostAddress = null
@@ -538,5 +573,19 @@ class WifiMouseController(
         runCatching { controlSocket?.close() }
         sendExecutor.shutdownNow()
         scope.cancel()
+    }
+
+    companion object {
+        internal fun matchesPreferredHost(
+            ip: String,
+            hostName: String,
+            preferredIp: String?,
+            preferredHostName: String?,
+        ): Boolean {
+            val cleanIp = preferredIp?.trim().orEmpty()
+            if (cleanIp.isNotEmpty() && ip == cleanIp) return true
+            val cleanName = preferredHostName?.trim().orEmpty()
+            return cleanName.isNotEmpty() && hostName.trim().equals(cleanName, ignoreCase = true)
+        }
     }
 }
