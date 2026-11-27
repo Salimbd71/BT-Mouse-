@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import com.slm.bluetooth.BtConnectionState
 import com.slm.bluetooth.ConnectionDiagnostic
 import com.slm.bluetooth.HostDeviceType
+import com.slm.bluetooth.NearbyBtDevice
 import com.slm.bluetooth.PairedHostDevice
 import com.slm.data.TransportMode
 import com.slm.ui.theme.ConnectedEmerald
@@ -76,6 +77,8 @@ fun DevicesBottomSheet(
     transportMode: TransportMode,
     connectionState: BtConnectionState,
     pairedDevices: List<PairedHostDevice>,
+    nearbyBtDevices: List<NearbyBtDevice>,
+    isBtScanning: Boolean,
     diagnostic: ConnectionDiagnostic?,
     localBluetoothName: String?,
     wifiConnectionState: WifiConnectionState,
@@ -90,6 +93,9 @@ fun DevicesBottomSheet(
     onMakeDiscoverable: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
     onRefreshDevices: () -> Unit,
+    onScanNearbyBt: () -> Unit,
+    onStopBtScan: () -> Unit,
+    onPairNearbyBt: (String) -> Unit,
     onConnectDevice: (String) -> Unit,
     onDisconnectDevice: () -> Unit,
     onScanWifi: () -> Unit,
@@ -490,6 +496,61 @@ fun DevicesBottomSheet(
 
                 AutoReconnectCard(autoConnect = autoConnect, onAutoConnectChanged = onAutoConnectChanged)
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (isBtScanning) {
+                            "SCANNING NEARBY TV / LAPTOP…"
+                        } else {
+                            "NEARBY DEVICES (${nearbyBtDevices.size})"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = if (isBtScanning) onStopBtScan else onScanNearbyBt,
+                        modifier = Modifier
+                            .height(36.dp)
+                            .testTag("bt_scan_nearby_button"),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        if (isBtScanning) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Stop Scan")
+                        } else {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.BluetoothSearching,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Scan Nearby")
+                        }
+                    }
+                }
+
+                if (nearbyBtDevices.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        nearbyBtDevices.forEach { device ->
+                            NearbyDeviceRow(
+                                device = device,
+                                onPair = { onPairNearbyBt(device.address) },
+                            )
+                        }
+                    }
+                } else if (isBtScanning) {
+                    Text(
+                        text = "Searching… For Windows laptops, keep Settings → Bluetooth & devices open on your laptop.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
                 Text(
                     text = "PAIRED DEVICES (${pairedDevices.size})",
                     style = MaterialTheme.typography.labelMedium,
@@ -515,7 +576,7 @@ fun DevicesBottomSheet(
                             )
                             Text("No paired Smart TV or PC found yet", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                text = "Tap 'Make Discoverable & Auto-Pair' above, then pair from your TV or Windows Bluetooth settings.",
+                                text = "Tap 'Scan Nearby' to find your TV/laptop, or tap 'Make Discoverable & Auto-Pair' and pair from your TV/Windows Bluetooth menu.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -647,6 +708,86 @@ private fun WifiHostRow(
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     Text("Connect")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NearbyDeviceRow(
+    device: NearbyBtDevice,
+    onPair: () -> Unit,
+) {
+    val icon = when (device.deviceType) {
+        HostDeviceType.SMART_TV -> Icons.Rounded.Tv
+        HostDeviceType.WINDOWS_PC -> Icons.Rounded.LaptopWindows
+        HostDeviceType.OTHER -> Icons.Rounded.DevicesOther
+    }
+    val typeLabel = when (device.deviceType) {
+        HostDeviceType.SMART_TV -> "Smart TV"
+        HostDeviceType.WINDOWS_PC -> "Windows / PC"
+        HostDeviceType.OTHER -> "Bluetooth Device"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.size(42.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = typeLabel,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = device.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "$typeLabel • ${device.address}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (device.isBonding) {
+                OutlinedButton(
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Pairing")
+                }
+            } else {
+                Button(
+                    onClick = onPair,
+                    modifier = Modifier.height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("Pair & Connect")
                 }
             }
         }

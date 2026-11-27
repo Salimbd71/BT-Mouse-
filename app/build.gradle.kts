@@ -8,6 +8,8 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val includeAdmobAds = providers.gradleProperty("includeAdmobAds").orNull?.trim()?.toBooleanStrictOrNull() ?: true
+
 android {
   namespace = "com.slm"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -28,6 +30,7 @@ android {
       ?.takeIf { it.isNotEmpty() }
       ?: "https://github.com/salim/bt-mouse/releases/latest/download/BT-mouse-release.apk"
     buildConfigField("String", "ANDROID_APK_URL", "\"$apkUrlProp\"")
+    buildConfigField("boolean", "ADMOB_ENABLED", "$includeAdmobAds")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -39,7 +42,7 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
@@ -77,6 +80,14 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+  sourceSets {
+    getByName("main") {
+      kotlin.directories.add(if (includeAdmobAds) "src/admob/java" else "src/noads/java")
+      if (!includeAdmobAds) {
+        manifest.srcFile("src/noads/AndroidManifest.xml")
+      }
+    }
   }
 }
 
@@ -132,7 +143,9 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.zxing.core)
-  implementation(libs.play.services.ads)
+  if (includeAdmobAds) {
+    implementation(libs.play.services.ads)
+  }
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)

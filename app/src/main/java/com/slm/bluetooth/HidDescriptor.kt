@@ -66,8 +66,8 @@ object HidDescriptor {
 
         // Modifier Byte (Left/Right Ctrl, Shift, Alt, GUI)
         0x05.toByte(), 0x07.toByte(), // Usage Page (Key Codes)
-        0x19.toByte(), 0xE0.toByte(), // Usage Minimum (224)
-        0x29.toByte(), 0xE7.toByte(), // Usage Maximum (231)
+        0x1A.toByte(), 0xE0.toByte(), 0x00.toByte(), // Usage Minimum (224)
+        0x2A.toByte(), 0xE7.toByte(), 0x00.toByte(), // Usage Maximum (231)
         0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
         0x25.toByte(), 0x01.toByte(), // Logical Maximum (1)
         0x75.toByte(), 0x01.toByte(), // Report Size (1)
@@ -83,10 +83,10 @@ object HidDescriptor {
         0x95.toByte(), 0x06.toByte(), // Report Count (6)
         0x75.toByte(), 0x08.toByte(), // Report Size (8)
         0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
-        0x25.toByte(), 0xE7.toByte(), // Logical Maximum (231)
+        0x26.toByte(), 0xE7.toByte(), 0x00.toByte(), // Logical Maximum (231)
         0x05.toByte(), 0x07.toByte(), // Usage Page (Key Codes)
         0x19.toByte(), 0x00.toByte(), // Usage Minimum (0)
-        0x29.toByte(), 0xE7.toByte(), // Usage Maximum (231)
+        0x2A.toByte(), 0xE7.toByte(), 0x00.toByte(), // Usage Maximum (231)
         0x81.toByte(), 0x00.toByte(), // Input (Data, Array)
 
         0xC0.toByte(), // End Collection (Application)

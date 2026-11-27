@@ -10,6 +10,7 @@ import com.slm.bluetooth.ConnectionDiagnostic
 import com.slm.bluetooth.HidKeyMap
 import com.slm.bluetooth.HidMotionEngine
 import com.slm.bluetooth.HidTelemetry
+import com.slm.bluetooth.NearbyBtDevice
 import com.slm.bluetooth.PairedHostDevice
 import com.slm.data.AppSettings
 import com.slm.data.MouseButtonsPosition
@@ -47,6 +48,8 @@ data class BtMouseUiState(
     val settingsLoaded: Boolean = false,
     val connectionState: BtConnectionState = BtConnectionState.Initializing,
     val pairedDevices: List<PairedHostDevice> = emptyList(),
+    val nearbyBtDevices: List<NearbyBtDevice> = emptyList(),
+    val isBtScanning: Boolean = false,
     val telemetry: HidTelemetry = HidTelemetry(),
     val diagnostic: ConnectionDiagnostic? = null,
     val localBluetoothName: String? = null,
@@ -101,6 +104,8 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
     private data class BluetoothSnapshot(
         val connectionState: BtConnectionState,
         val pairedDevices: List<PairedHostDevice>,
+        val nearbyDevices: List<NearbyBtDevice>,
+        val isScanning: Boolean,
         val telemetry: HidTelemetry,
         val diagnostic: ConnectionDiagnostic?,
         val localBluetoothName: String?,
@@ -112,14 +117,32 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
         val isTransmitting: Boolean,
     )
 
+    private val btScanSnapshot = combine(
+        hidController.nearbyDevices,
+        hidController.isScanning,
+    ) { nearby, scanning ->
+        nearby to scanning
+    }
+
     private val bluetoothSnapshot = combine(
         hidController.connectionState,
         hidController.pairedDevices,
+        btScanSnapshot,
         hidController.telemetry,
         hidController.diagnostic,
-        hidController.localAdapterName,
-    ) { connState, devices, telemetry, diagnostic, localName ->
-        BluetoothSnapshot(connState, devices, telemetry, diagnostic, localName)
+    ) { connState, devices, (nearby, scanning), telemetry, diagnostic ->
+        Triple(connState, devices, Triple(nearby, scanning, telemetry to diagnostic))
+    }.combine(hidController.localAdapterName) { (connState, devices, extra), localName ->
+        val (nearby, scanning, telDiag) = extra
+        BluetoothSnapshot(
+            connectionState = connState,
+            pairedDevices = devices,
+            nearbyDevices = nearby,
+            isScanning = scanning,
+            telemetry = telDiag.first,
+            diagnostic = telDiag.second,
+            localBluetoothName = localName,
+        )
     }
 
     private val wifiSnapshot = combine(
@@ -141,6 +164,7 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
             pollingRateHz = settings.pollingRateHz,
             autoConnect = settings.autoConnect,
             preferredAddress = settings.lastConnectedAddress,
+            bluetoothModeActive = settings.transportMode == TransportMode.BLUETOOTH,
         )
         wifiController.updateSettings(
             pollingRateHz = settings.pollingRateHz,
@@ -153,6 +177,8 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
             settingsLoaded = settingsLoaded,
             connectionState = bt.connectionState,
             pairedDevices = bt.pairedDevices,
+            nearbyBtDevices = bt.nearbyDevices,
+            isBtScanning = bt.isScanning,
             telemetry = bt.telemetry,
             diagnostic = bt.diagnostic,
             localBluetoothName = bt.localBluetoothName,
@@ -267,7 +293,11 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
     fun setDevicesSheetVisible(visible: Boolean) {
         if (visible) {
             hidController.refreshPairedDevices()
-            wifiController.startDiscovery(autoConnectIfFound = false)
+            if (isWifiMode()) {
+                wifiController.startDiscovery(autoConnectIfFound = false)
+            }
+        } else {
+            hidController.stopNearbyScan()
         }
         _localUi.update { it.copy(showDevicesSheet = visible) }
     }
@@ -662,6 +692,18 @@ class BtMouseViewModel(application: Application) : AndroidViewModel(application)
 
     fun connectToHost(address: String) {
         hidController.connectByAddress(address)
+    }
+
+    fun scanNearbyBluetooth() {
+        hidController.startNearbyScan()
+    }
+
+    fun stopNearbyBluetoothScan() {
+        hidController.stopNearbyScan()
+    }
+
+    fun pairAndConnectBluetooth(address: String) {
+        hidController.pairAndConnect(address)
     }
 
     fun disconnectHost() {

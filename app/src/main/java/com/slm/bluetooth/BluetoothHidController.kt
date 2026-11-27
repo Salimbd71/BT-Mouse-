@@ -49,6 +49,12 @@ class BluetoothHidController(
     private val _pairedDevices = MutableStateFlow<List<PairedHostDevice>>(emptyList())
     val pairedDevices: StateFlow<List<PairedHostDevice>> = _pairedDevices.asStateFlow()
 
+    private val _nearbyDevices = MutableStateFlow<List<NearbyBtDevice>>(emptyList())
+    val nearbyDevices: StateFlow<List<NearbyBtDevice>> = _nearbyDevices.asStateFlow()
+
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
     private val _telemetry = MutableStateFlow(HidTelemetry())
     val telemetry: StateFlow<HidTelemetry> = _telemetry.asStateFlow()
 
@@ -61,24 +67,28 @@ class BluetoothHidController(
     private var hidDevice: BluetoothHidDevice? = null
     private var connectedHost: BluetoothDevice? = null
     private var isAppRegistered = false
-    private var attemptedQosFallback = false
     private var receiverRegistered = false
     private var autoConnectEnabled = true
+    private var isBluetoothModeActive = false
     private var preferredHostAddress: String? = null
     private var pendingConnectAddress: String? = null
     private var activeConnectAttemptAddress: String? = null
+    private var bondingAddress: String? = null
+    private val discoveredDeviceMap = linkedMapOf<String, BluetoothDevice>()
 
     private var activeButtonsMask = AtomicInteger(0)
     private var activePollingHz = 125
     private var motionLoopJob: Job? = null
     private var discoverableTimerJob: Job? = null
     private var connectTimeoutJob: Job? = null
+    private var postBondConnectJob: Job? = null
     private var txPulseJob: Job? = null
     private var packetCounter = 0L
 
     var onHostConnected: ((address: String, name: String) -> Unit)? = null
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
         override fun onReceive(ctx: Context?, intent: Intent?) {
             when (intent?.action) {
                 BluetoothAdapter.ACTION_STATE_CHANGED -> {
@@ -87,20 +97,72 @@ class BluetoothHidController(
                         initialize()
                     } else if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
                         connectTimeoutJob?.cancel()
+                        postBondConnectJob?.cancel()
                         activeConnectAttemptAddress = null
+                        bondingAddress = null
                         connectedHost = null
                         isAppRegistered = false
+                        _isScanning.value = false
+                        discoveredDeviceMap.clear()
+                        _nearbyDevices.value = emptyList()
                         _connectionState.value = BtConnectionState.BluetoothDisabled
                         _pairedDevices.value = emptyList()
                     }
+                }
+                BluetoothDevice.ACTION_FOUND -> {
+                    if (!hasRequiredPermissions()) return
+                    val device = getParcelableDevice(intent) ?: return
+                    val name = runCatching { device.name }.getOrNull()?.trim().orEmpty()
+                    if (name.isEmpty()) return
+                    val bondState = runCatching { device.bondState }.getOrDefault(BluetoothDevice.BOND_NONE)
+                    if (bondState == BluetoothDevice.BOND_BONDED) return
+                    val devType = runCatching { device.type }.getOrDefault(BluetoothDevice.DEVICE_TYPE_UNKNOWN)
+                    if (devType == BluetoothDevice.DEVICE_TYPE_LE) return
+                    discoveredDeviceMap[device.address] = device
+                    publishNearbyDevices()
+                }
+                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                    _isScanning.value = false
                 }
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
                     refreshPairedDevices()
                     val device = getParcelableDevice(intent)
                     val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
-                    if (bondState == BluetoothDevice.BOND_BONDED && device != null && autoConnectEnabled) {
-                        _diagnostic.value = null
-                        connectDevice(device)
+                    when (bondState) {
+                        BluetoothDevice.BOND_BONDING -> {
+                            bondingAddress = device?.address
+                            publishNearbyDevices()
+                        }
+                        BluetoothDevice.BOND_BONDED -> {
+                            if (device != null) {
+                                if (bondingAddress == device.address) bondingAddress = null
+                                discoveredDeviceMap.remove(device.address)
+                                publishNearbyDevices()
+                                _diagnostic.value = null
+                                // Wait briefly so Smart TVs/PCs that initiate the HID link themselves do not hit an L2CAP race
+                                if (autoConnectEnabled) {
+                                    postBondConnectJob?.cancel()
+                                    postBondConnectJob = scope.launch {
+                                        delay(1200L)
+                                        if (connectedHost == null && activeConnectAttemptAddress == null) {
+                                            connectDevice(device)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        BluetoothDevice.BOND_NONE -> {
+                            if (device != null && bondingAddress == device.address) {
+                                bondingAddress = null
+                                publishNearbyDevices()
+                                val name = safeDeviceName(device)
+                                _diagnostic.value = ConnectionDiagnostic(
+                                    deviceName = name,
+                                    message = "Pairing with $name did not complete. Make sure you accept the Bluetooth pairing prompt on the TV or laptop.",
+                                    isAlreadyPairedSdpHint = false,
+                                )
+                            }
+                        }
                     }
                 }
                 BluetoothAdapter.ACTION_SCAN_MODE_CHANGED -> {
@@ -149,10 +211,16 @@ class BluetoothHidController(
         }
     }
 
-    fun updateSettings(pollingRateHz: Int, autoConnect: Boolean, preferredAddress: String?) {
+    fun updateSettings(
+        pollingRateHz: Int,
+        autoConnect: Boolean,
+        preferredAddress: String?,
+        bluetoothModeActive: Boolean = false,
+    ) {
         activePollingHz = pollingRateHz
         autoConnectEnabled = autoConnect
         preferredHostAddress = preferredAddress
+        isBluetoothModeActive = bluetoothModeActive
         _telemetry.value = _telemetry.value.copy(activeRateHz = pollingRateHz)
     }
 
@@ -194,8 +262,7 @@ class BluetoothHidController(
         if (hidDevice == null) {
             adapter.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
         } else {
-            attemptedQosFallback = false
-            registerHidApp(hidDevice!!, useLowLatencyQos = true)
+            registerHidApp(hidDevice!!)
         }
     }
 
@@ -203,6 +270,8 @@ class BluetoothHidController(
         if (receiverRegistered) return
         val filter = IntentFilter().apply {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
             addAction(BluetoothAdapter.ACTION_SCAN_MODE_CHANGED)
         }
@@ -220,8 +289,7 @@ class BluetoothHidController(
             if (profile == BluetoothProfile.HID_DEVICE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val device = proxy as BluetoothHidDevice
                 hidDevice = device
-                attemptedQosFallback = false
-                registerHidApp(device, useLowLatencyQos = true)
+                registerHidApp(device)
             }
         }
 
@@ -239,7 +307,7 @@ class BluetoothHidController(
 
     @RequiresApi(Build.VERSION_CODES.P)
     @SuppressLint("MissingPermission")
-    private fun registerHidApp(device: BluetoothHidDevice, useLowLatencyQos: Boolean) {
+    private fun registerHidApp(device: BluetoothHidDevice) {
         if (!hasRequiredPermissions()) return
         val sdp = BluetoothHidDeviceAppSdpSettings(
             "BT mouse",
@@ -248,26 +316,12 @@ class BluetoothHidController(
             BluetoothHidDevice.SUBCLASS1_COMBO,
             HidDescriptor.COMPOSITE_DESCRIPTOR,
         )
-        val outQos = if (useLowLatencyQos) {
-            BluetoothHidDeviceAppQosSettings(
-                BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
-                800,
-                9,
-                0,
-                4000,
-                4000,
-            )
-        } else {
-            null
-        }
+        // Use null inQos/outQos so Smart TVs and OEM Bluetooth chips negotiate compatible L2CAP parameters
         val accepted = runCatching {
-            device.registerApp(sdp, null, outQos, hidExecutor, hidCallback)
+            device.registerApp(sdp, null, null, hidExecutor, hidCallback)
         }.getOrDefault(false)
 
-        if (!accepted && useLowLatencyQos && !attemptedQosFallback) {
-            attemptedQosFallback = true
-            registerHidApp(device, useLowLatencyQos = false)
-        } else if (!accepted) {
+        if (!accepted) {
             _diagnostic.value = ConnectionDiagnostic(
                 deviceName = "Bluetooth HID",
                 message = "Another Bluetooth HID app may be active, or your phone's Bluetooth stack rejected HID registration. Toggle Bluetooth off and on, then retry.",
@@ -296,17 +350,12 @@ class BluetoothHidController(
                 pendingConnectAddress = null
                 if (pendingAddr != null) {
                     connectByAddress(pendingAddr)
-                } else if (connectedHost == null && autoConnectEnabled) {
+                } else if (connectedHost == null && autoConnectEnabled && isBluetoothModeActive) {
                     attemptAutoConnect()
                 }
             } else {
                 connectedHost = null
-                if (!attemptedQosFallback && hidDevice != null) {
-                    attemptedQosFallback = true
-                    registerHidApp(hidDevice!!, useLowLatencyQos = false)
-                } else {
-                    _connectionState.value = BtConnectionState.Ready
-                }
+                _connectionState.value = BtConnectionState.Ready
             }
         }
 
@@ -447,6 +496,108 @@ class BluetoothHidController(
     }
 
     @SuppressLint("MissingPermission")
+    fun startNearbyScan() {
+        if (!hasRequiredPermissions()) {
+            _connectionState.value = BtConnectionState.PermissionRequired
+            return
+        }
+        val adapter = bluetoothAdapter ?: return
+        if (!adapter.isEnabled) {
+            _connectionState.value = BtConnectionState.BluetoothDisabled
+            return
+        }
+        _diagnostic.value = null
+        discoveredDeviceMap.clear()
+        _nearbyDevices.value = emptyList()
+        runCatching {
+            if (adapter.isDiscovering) {
+                adapter.cancelDiscovery()
+            }
+        }
+        val started = runCatching { adapter.startDiscovery() }.getOrDefault(false)
+        _isScanning.value = started
+        if (!started) {
+            _diagnostic.value = ConnectionDiagnostic(
+                deviceName = "Bluetooth Scan",
+                message = "Could not start nearby Bluetooth scan. Use 'Make Discoverable & Auto-Pair' and select your phone from your TV or laptop Bluetooth settings.",
+                isAlreadyPairedSdpHint = false,
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun stopNearbyScan() {
+        if (!hasRequiredPermissions()) {
+            _isScanning.value = false
+            return
+        }
+        runCatching {
+            if (bluetoothAdapter?.isDiscovering == true) {
+                bluetoothAdapter?.cancelDiscovery()
+            }
+        }
+        _isScanning.value = false
+    }
+
+    @SuppressLint("MissingPermission")
+    fun pairAndConnect(address: String) {
+        if (!hasRequiredPermissions()) return
+        val adapter = bluetoothAdapter ?: return
+        if (!adapter.isEnabled) return
+        stopNearbyScan()
+
+        val alreadyPaired = adapter.bondedDevices?.firstOrNull { it.address == address }
+        if (alreadyPaired != null) {
+            connectByAddress(address)
+            return
+        }
+
+        val target = discoveredDeviceMap[address] ?: runCatching {
+            adapter.getRemoteDevice(address)
+        }.getOrNull() ?: return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && !isAppRegistered) {
+            initialize()
+        }
+
+        bondingAddress = address
+        publishNearbyDevices()
+        val bondStarted = runCatching { target.createBond() }.getOrDefault(false)
+        if (!bondStarted) {
+            bondingAddress = null
+            publishNearbyDevices()
+            val name = safeDeviceName(target)
+            _diagnostic.value = ConnectionDiagnostic(
+                deviceName = name,
+                message = "Could not start pairing with $name directly. Tap 'Make Discoverable & Auto-Pair' and pair from your TV/laptop Bluetooth settings.",
+                isAlreadyPairedSdpHint = false,
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun publishNearbyDevices() {
+        val bondedAddrs = runCatching {
+            bluetoothAdapter?.bondedDevices?.map { it.address }?.toSet()
+        }.getOrNull() ?: emptySet()
+
+        _nearbyDevices.value = discoveredDeviceMap.values
+            .filter { it.address !in bondedAddrs }
+            .map { device ->
+                NearbyBtDevice(
+                    name = safeDeviceName(device),
+                    address = device.address,
+                    deviceType = classifyDevice(device),
+                    isBonding = device.address == bondingAddress,
+                )
+            }
+            .sortedWith(
+                compareBy<NearbyBtDevice> { it.deviceType == HostDeviceType.OTHER }
+                    .thenBy { it.name.lowercase() },
+            )
+    }
+
+    @SuppressLint("MissingPermission")
     fun connectByAddress(address: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || !hasRequiredPermissions()) return
         if (!isAppRegistered || hidDevice == null) {
@@ -482,9 +633,12 @@ class BluetoothHidController(
             delay(8500L)
             if (activeConnectAttemptAddress == device.address && connectedHost?.address != device.address) {
                 activeConnectAttemptAddress = null
+                hidExecutor.execute {
+                    runCatching { hid.disconnect(device) }
+                }
                 _diagnostic.value = ConnectionDiagnostic(
                     deviceName = targetName,
-                    message = "Could not connect to $targetName. Make sure Bluetooth is open on the laptop/TV—or if it was paired before installing BT mouse, remove the old pairing on both devices and pair again via Auto-Pair.",
+                    message = "Could not connect to $targetName. Many Smart TVs require removing any old pairing first and pairing from the TV's Bluetooth / Remotes menu while 'Make Discoverable & Auto-Pair' is active.",
                     isAlreadyPairedSdpHint = true,
                 )
                 updateConnectionStateFromHost()
@@ -492,14 +646,19 @@ class BluetoothHidController(
         }
 
         hidExecutor.execute {
-            runCatching { device.fetchUuidsWithSdp() }
+            runCatching {
+                if (bluetoothAdapter?.isDiscovering == true) {
+                    bluetoothAdapter?.cancelDiscovery()
+                }
+            }
+            _isScanning.value = false
             val initiated = runCatching { hid.connect(device) }.getOrDefault(false)
             if (!initiated) {
                 connectTimeoutJob?.cancel()
                 activeConnectAttemptAddress = null
                 _diagnostic.value = ConnectionDiagnostic(
                     deviceName = targetName,
-                    message = "Android could not start an HID link to $targetName. Remove the old pairing on both your phone and laptop, then tap Make Discoverable & Auto-Pair.",
+                    message = "Android could not start an HID link to $targetName. Remove the old pairing on both devices, then tap Make Discoverable & Auto-Pair.",
                     isAlreadyPairedSdpHint = true,
                 )
                 updateConnectionStateFromHost()
@@ -715,9 +874,11 @@ class BluetoothHidController(
     @SuppressLint("MissingPermission")
     fun release() {
         connectTimeoutJob?.cancel()
+        postBondConnectJob?.cancel()
         motionLoopJob?.cancel()
         discoverableTimerJob?.cancel()
         txPulseJob?.cancel()
+        stopNearbyScan()
         if (receiverRegistered) {
             runCatching { context.unregisterReceiver(bluetoothReceiver) }
             receiverRegistered = false

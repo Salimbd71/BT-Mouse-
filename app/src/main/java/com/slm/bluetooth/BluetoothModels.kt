@@ -13,6 +13,13 @@ data class PairedHostDevice(
     val isConnected: Boolean = false,
 )
 
+data class NearbyBtDevice(
+    val name: String,
+    val address: String,
+    val deviceType: HostDeviceType,
+    val isBonding: Boolean = false,
+)
+
 sealed class BtConnectionState {
     data object Unsupported : BtConnectionState()
     data object PermissionRequired : BtConnectionState()

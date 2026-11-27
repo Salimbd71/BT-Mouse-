@@ -147,7 +147,7 @@ fun BtMouseScreen(
         if (result.resultCode > 0) {
             viewModel.onDiscoverableLaunched(result.resultCode)
         } else {
-            viewModel.onDiscoverableLaunched(300)
+            Toast.makeText(context, "Allow Bluetooth visibility so your TV or laptop can find this phone", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -565,6 +565,8 @@ fun BtMouseScreen(
             transportMode = uiState.settings.transportMode,
             connectionState = uiState.connectionState,
             pairedDevices = uiState.pairedDevices,
+            nearbyBtDevices = uiState.nearbyBtDevices,
+            isBtScanning = uiState.isBtScanning,
             diagnostic = uiState.diagnostic,
             localBluetoothName = uiState.localBluetoothName,
             wifiConnectionState = uiState.wifiConnectionState,
@@ -579,6 +581,9 @@ fun BtMouseScreen(
             onMakeDiscoverable = ::launchDiscoverable,
             onOpenBluetoothSettings = ::openBluetoothSettings,
             onRefreshDevices = viewModel::refreshDevices,
+            onScanNearbyBt = viewModel::scanNearbyBluetooth,
+            onStopBtScan = viewModel::stopNearbyBluetoothScan,
+            onPairNearbyBt = viewModel::pairAndConnectBluetooth,
             onConnectDevice = viewModel::connectToHost,
             onDisconnectDevice = viewModel::disconnectHost,
             onScanWifi = viewModel::scanWifiHosts,

@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: true
+      include_admob_ads:
+        description: "Include AdMob Ads"
+        required: false
+        type: boolean
+        default: true
       build_release_apk:
         description: "Build Release APK"
         required: false
@@ -195,12 +200,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.STORE_PASSWORD }}" ] && [ -n "${{ secrets.KEY_PASSWORD }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
-            echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> "$GITHUB_ENV"
-            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          if [ -n "${{ secrets.MASTER_KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.MASTER_STORE_PASSWORD }}" ] && [ -n "${{ secrets.MASTER_KEY_PASSWORD }}" ]; then
+            echo "${{ secrets.MASTER_KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+            ALIASES=$(keytool -J-Duser.language=en -list -keystore my-upload-key.jks -storepass "${{ secrets.MASTER_STORE_PASSWORD }}" 2>/dev/null | awk -F',' '/PrivateKeyEntry|SecretKeyEntry/ {print $1}')
+            SELECTED_ALIAS=""
+            if echo "$ALIASES" | grep -qx "master_upload"; then
+              SELECTED_ALIAS="master_upload"
+            elif echo "$ALIASES" | grep -qx "upload"; then
+              SELECTED_ALIAS="upload"
+            else
+              SELECTED_ALIAS=$(echo "$ALIASES" | head -n 1 | xargs || true)
+              if [ -z "$SELECTED_ALIAS" ]; then
+                SELECTED_ALIAS="master_upload"
+              fi
+            fi
+            echo "STORE_PASSWORD=${{ secrets.MASTER_STORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${{ secrets.MASTER_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$SELECTED_ALIAS" >> "$GITHUB_ENV"
             echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
-            echo "Using repository release signing secrets."
+            echo "Using repository master release signing secrets (alias: $SELECTED_ALIAS)."
           else
             rm -f my-upload-key.jks
             keytool -genkeypair -noprompt \
@@ -211,21 +229,22 @@ jobs:
               -dname "CN=BT WiFi Mouse, OU=Mobile, O=SLM, L=Naogaon, S=Rajshahi, C=BD"
             echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=upload" >> "$GITHUB_ENV"
             echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
-            echo "Signing secrets not set; using temporary release keystore."
+            echo "Master signing secrets not set; using temporary release keystore."
           fi
 
       - name: Run unit tests
         if: ${{ inputs.run_unit_tests }}
-        run: gradle :app:testDebugUnitTest --no-daemon -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL" -PandroidApkUrl="$ANDROID_APK_URL"
+        run: gradle :app:testDebugUnitTest --no-daemon -PincludeAdmobAds="${{ inputs.include_admob_ads }}" -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL" -PandroidApkUrl="$ANDROID_APK_URL"
 
       - name: Build Debug APK
         if: ${{ inputs.build_debug_apk }}
-        run: gradle :app:assembleDebug --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL" -PandroidApkUrl="$ANDROID_APK_URL"
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -PincludeAdmobAds="${{ inputs.include_admob_ads }}" -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL" -PandroidApkUrl="$ANDROID_APK_URL"
 
       - name: Build Release APK
         if: ${{ inputs.build_release_apk }}
-        run: gradle :app:assembleRelease --no-daemon --stacktrace -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL" -PandroidApkUrl="$ANDROID_APK_URL"
+        run: gradle :app:assembleRelease --no-daemon --stacktrace -PincludeAdmobAds="${{ inputs.include_admob_ads }}" -PappVersionName="$VERSION_NAME" -PappVersionCode="$VERSION_CODE" -PwindowsReceiverUrl="$WINDOWS_RECEIVER_URL" -PandroidApkUrl="$ANDROID_APK_URL"
 
       - name: Upload Debug APK artifact
         if: ${{ inputs.build_debug_apk }}

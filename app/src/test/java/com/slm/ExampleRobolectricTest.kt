@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.slm.ads.AdMobIds
 import com.slm.bluetooth.BluetoothHidController
+import com.slm.bluetooth.HidDescriptor
 import com.slm.bluetooth.HidMotionEngine
 import com.slm.data.AppSettings
 import com.slm.data.MouseButtonsPosition
@@ -34,9 +35,15 @@ class ExampleRobolectricTest {
         assertEquals("BT/WiFi Mouse With File Transfer", appName)
         assertEquals("com.slm.btmouse", BuildConfig.APPLICATION_ID)
         assertEquals("1.0", BuildConfig.VERSION_NAME)
-        assertEquals("ca-app-pub-3239967742299196~9829622978", AdMobIds.APP_ID)
-        assertEquals("ca-app-pub-3239967742299196/4525325407", AdMobIds.BANNER_UNIT_ID)
-        assertEquals("ca-app-pub-3239967742299196/6987516412", AdMobIds.INTERSTITIAL_UNIT_ID)
+        if (BuildConfig.ADMOB_ENABLED) {
+            assertEquals("ca-app-pub-3239967742299196~9829622978", AdMobIds.APP_ID)
+            assertEquals("ca-app-pub-3239967742299196/4525325407", AdMobIds.BANNER_UNIT_ID)
+            assertEquals("ca-app-pub-3239967742299196/6987516412", AdMobIds.INTERSTITIAL_UNIT_ID)
+        } else {
+            assertEquals("", AdMobIds.APP_ID)
+            assertEquals("", AdMobIds.BANNER_UNIT_ID)
+            assertEquals("", AdMobIds.INTERSTITIAL_UNIT_ID)
+        }
         assertTrue(BuildConfig.WINDOWS_RECEIVER_URL.endsWith("/BTMouseReceiver-Setup.exe"))
         assertTrue(BuildConfig.ANDROID_APK_URL.endsWith("/BT-mouse-release.apk"))
     }
@@ -117,5 +124,22 @@ class ExampleRobolectricTest {
                 preferredHostName = "SALIM-PC",
             ),
         )
+    }
+
+    @Test
+    fun `hid composite descriptor encodes keyboard max 231 as 16-bit unsigned instead of negative signed byte`() {
+        val bytes = HidDescriptor.COMPOSITE_DESCRIPTOR
+        // Must NOT contain 0x25 0xE7 (signed -25 rejected by Smart TV/Linux HID parsers)
+        for (i in 0 until bytes.size - 1) {
+            assertFalse(
+                "Found invalid signed 1-byte Logical Maximum 0xE7 at index $i",
+                bytes[i] == 0x25.toByte() && bytes[i + 1] == 0xE7.toByte(),
+            )
+        }
+        // Must contain 2-byte positive Logical Maximum (231): 0x26, 0xE7, 0x00
+        val has2ByteMax231 = (0 until bytes.size - 2).any { i ->
+            bytes[i] == 0x26.toByte() && bytes[i + 1] == 0xE7.toByte() && bytes[i + 2] == 0x00.toByte()
+        }
+        assertTrue("Descriptor must encode Logical Maximum (231) as 0x26 0xE7 0x00", has2ByteMax231)
     }
 }
